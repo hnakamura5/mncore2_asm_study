@@ -3,29 +3,32 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Iterator, Sequence, Self, overload
+from typing import Generator, Sequence, Self, overload
 
 from .debug import DebugDataType, DebugMemoryOperand
 from .operands import (
+    AluReadOperand,
     ALUAnyPrecision,
     ALUBfnPrecision,
     ALUFloatPrecision,
     ALUIntPrecision,
     DAR,
     DRAM,
+    FixedInput,
+    Forwarding,
+    ForwardingKind,
     L1BM,
     L2BM,
-    LM0,
-    LM1,
     MAUHalfSelect,
     Matrix,
-    MatrixOperand,
     MatrixVector,
     MvOperand,
+    Nowrite,
     PDM,
     PeReadOperand,
     PeWriteOperand,
     RRNOpcode,
+    WordWidth,
 )
 from .statements import (
     CycleStatement,
@@ -53,6 +56,8 @@ class InstructionBuilder:
     制約:
     - この builder は文法整形を担当し、全てのハザード・待機サイクル・精度制約までは自動検証しない。
     - MV 命令は非同期実行であり、必要に応じて `wait()` や `nop()` を併用する前提で使う。
+    - 複数 MV 命令の同時発行制約や、PE 命令の並列実行条件・ハザード待ちは呼び出し側責務である。
+    - ALU/MAU の入力精度拡張・縮減、マスクフラグ生成規則、`nowrite` の排他条件も文字列化のみを行う。
     - 一部の結果例は manual の説明を builder 利用者向けに要約した概念図である。
     """
 
@@ -73,7 +78,7 @@ class InstructionBuilder:
         self._active_cycle: list[InstructionStatement] | None = None
 
     @contextmanager
-    def cycle(self) -> Iterator[InstructionBuilder]:
+    def cycle(self) -> Generator[InstructionBuilder, None, None]:
         """
         対応: MNCore2.md 7.1 PE 命令の共通仕様
 
@@ -83,6 +88,7 @@ class InstructionBuilder:
         注意:
         - MV / debug / pseudo 文は cycle 内へ追加できない。
         - ネストした `cycle()` は未対応で例外になる。
+        - 同時発行できる組み合わせかどうかまではここでは検証しない。
 
         生成構文:
             cycle 内の PE 命令を `;` 区切りの 1 行へ束ねる。
@@ -157,7 +163,7 @@ class InstructionBuilder:
         """
         render = getattr(operand, "render", None)
         if callable(render):
-            return render()
+            return str(render())
         return str(operand)
 
     def _render_operands(self, operands: Sequence[object]) -> str:
@@ -166,7 +172,38 @@ class InstructionBuilder:
         """
         if not operands:
             raise ValueError("At least one destination operand is required")
+        if any(isinstance(operand, Nowrite) for operand in operands) and len(operands) != 1:
+            raise ValueError("nowrite must be the only destination operand")
         return " ".join(self._render_operand(operand) for operand in operands)
+
+    def _validate_alu_source_operand(self, operand: object, *, position: int, opcode: str) -> None:
+        if position != 0 and isinstance(operand, FixedInput):
+            raise ValueError(f"{opcode} allows fixed inputs only in the first ALU source")
+        if position != 0 and isinstance(operand, Forwarding) and operand.kind == ForwardingKind.MREAD:
+            raise ValueError(f"{opcode} allows mreadf only in the first ALU source")
+
+    def _emit_alu_unary(self, opcode: str, src_operand: object, dst_operands: Sequence[object]) -> Self:
+        self._validate_alu_source_operand(src_operand, position=0, opcode=opcode)
+        return self._emit_pe(f"{opcode} {self._render_operand(src_operand)} {self._render_operands(dst_operands)}")
+
+    def _emit_alu_binary(
+        self,
+        opcode: str,
+        src_x_operand: object,
+        src_y_operand: object,
+        dst_operands: Sequence[object],
+    ) -> Self:
+        self._validate_alu_source_operand(src_x_operand, position=0, opcode=opcode)
+        self._validate_alu_source_operand(src_y_operand, position=1, opcode=opcode)
+        return self._emit_pe(
+            f"{opcode} {self._render_operand(src_x_operand)} {self._render_operand(src_y_operand)} {self._render_operands(dst_operands)}"
+        )
+
+    def _validate_half_matrix(self, matrix: Matrix, *, opcode: str, require_double_long: bool) -> None:
+        if require_double_long and matrix.width != WordWidth.DOUBLE_LONG:
+            raise ValueError(f"{opcode} requires a double-long matrix operand")
+        if matrix.width == WordWidth.DOUBLE_LONG and matrix.addr % 2 != 0:
+            raise ValueError(f"{opcode} requires an even matrix addr for double-long access")
 
     def _emit_pe(self, text: str) -> Self:
         """
@@ -224,6 +261,8 @@ class InstructionBuilder:
     ) -> Self:
         """
         MV 命令 1 行を構築して non-PE statement として追加する。
+
+        manual が言及する「複数 MV 命令を同時発行する場合の追加制約」はここでは見ない。
         """
         suffix = self._mv_suffix(size=size, tag=tag, nd=nd, priority=priority)
         return self._emit_non_pe(
@@ -925,6 +964,7 @@ class InstructionBuilder:
 
         注意:
         - `wait` は単独行ではなく、他の PE 命令と同時発行する前提。
+        - 停止対象は後続 PE 命令だけでなく、後続 MV 命令の発行にも及ぶ。
         - `nop` / `noforward` は cycle 内外のどちらでも追加できる。
 
         生成構文:
@@ -936,7 +976,10 @@ class InstructionBuilder:
 
         補足:
             manual では `wait` の単独発行は禁止されており、builder でも他の PE 命令と同じ cycle 行に置く想定で使う。
+            また完了待ちの間は MV 側の後続発行も止まるため、タグ設計は命令列全体で考える必要がある。
         """
+        if tag == 0:
+            raise ValueError("wait tag 0 is invalid")
         return self._emit_pe(f"wait {tag}")
 
     def l2bmb(self, *, src_l2bm: L2BM, dst_l1bm: L1BM, l1bset: str | None = None) -> Self:
@@ -2096,6 +2139,7 @@ class InstructionBuilder:
             入力例: `hmwrite $lr0 $lx0`
             結果例: half ベクトルを行列レジスタへ並べ、`hmfma` / `hmread` で参照できるようにする。
         """
+        self._validate_half_matrix(dst_matrix, opcode="hmwrite", require_double_long=False)
         return self._emit_pe(f"hmwrite {src_operand.render()} {dst_matrix.render()}")
 
     def dmread(self, *, src_matrix: Matrix, dst_operands: Sequence[PeWriteOperand]) -> Self:
@@ -2186,6 +2230,7 @@ class InstructionBuilder:
             入力例: `hmread $lx0 $ln0`
             結果例: half 行列を転置読み出しし、4 half / 長語の形で dst へ戻す。
         """
+        self._validate_half_matrix(src_matrix, opcode="hmread", require_double_long=True)
         return self._emit_pe(f"hmread {src_matrix.render()} {self._render_operands(dst_operands)}")
 
     def zero(self, *, dst_operands: Sequence[PeWriteOperand]) -> Self:
@@ -2235,7 +2280,7 @@ class InstructionBuilder:
         opcode = "immu" if unsigned else "imm"
         return self._emit_pe(f"{opcode} {payload} {self._render_operands(dst_operands)}")
 
-    def msl(self, *, src_operand: PeReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def msl(self, *, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
         """
         対応: MNCore2.md 7.8 `msl`
 
@@ -2255,9 +2300,9 @@ class InstructionBuilder:
             入力例: PE0..3 が `(10,20,30,40)` を持つ状態で `msl` を実行する。
             結果例: 値は `0 -> 1 -> 2 -> 3 -> 0` の向きに循環し、PE0 には元の PE3 の値、PE1 には元の PE0 の値が入る。
         """
-        return self._emit_pe(f"msl {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary("msl", src_operand, dst_operands)
 
-    def msr(self, *, src_operand: PeReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def msr(self, *, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
         """
         対応: MNCore2.md 7.8 `msr`
 
@@ -2277,13 +2322,13 @@ class InstructionBuilder:
             入力例: PE0..3 が `(10,20,30,40)` を持つ状態で `msr` を実行する。
             結果例: `msl` と逆向きに循環し、PE0 には元の PE1 の値、PE3 には元の PE0 の値が入る。
         """
-        return self._emit_pe(f"msr {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary("msr", src_operand, dst_operands)
 
     def passa(
         self,
         *,
         precision: ALUAnyPrecision,
-        src_operand: PeReadOperand,
+        src_operand: AluReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -2305,13 +2350,13 @@ class InstructionBuilder:
             入力例: `lpassa $lr0 $ln0`
             結果例: `$lr0` に 42 が入っていれば、dst 側にも同じ 42 が出る。tutorial では PE 番号を書き込む例の基本形として使われる。
         """
-        return self._emit_pe(f"{precision}passa {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary(f"{precision}passa", src_operand, dst_operands)
 
     def inc(
         self,
         *,
         precision: ALUIntPrecision,
-        src_operand: PeReadOperand,
+        src_operand: AluReadOperand,
         dst_operands: Sequence[PeWriteOperand],
         unsigned: bool = False,
     ) -> Self:
@@ -2335,13 +2380,13 @@ class InstructionBuilder:
             結果例: `$lr0` が 41 なら dst には 42 が出る。`unsigned=True` のときはオーバーフロー判定の意味が変わる。
         """
         opcode = f"{'u' if unsigned else ''}{precision}inc"
-        return self._emit_pe(f"{opcode} {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary(opcode, src_operand, dst_operands)
 
     def dec(
         self,
         *,
         precision: ALUIntPrecision,
-        src_operand: PeReadOperand,
+        src_operand: AluReadOperand,
         dst_operands: Sequence[PeWriteOperand],
         unsigned: bool = False,
     ) -> Self:
@@ -2365,9 +2410,9 @@ class InstructionBuilder:
             結果例: `$lr0` が 42 なら dst には 41 が出る。
         """
         opcode = f"{'u' if unsigned else ''}{precision}dec"
-        return self._emit_pe(f"{opcode} {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary(opcode, src_operand, dst_operands)
 
-    def not_(self, *, precision: ALUIntPrecision, src_operand: PeReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def not_(self, *, precision: ALUIntPrecision, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
         """
         対応: MNCore2.md 7.8 `not`
 
@@ -2387,9 +2432,9 @@ class InstructionBuilder:
             入力例: `snot $lr0 $ln0`
             結果例: half 精度相当で `$lr0` が `0x0000` なら、dst には `0xFFFF` が出る。
         """
-        return self._emit_pe(f"{precision}not {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary(f"{precision}not", src_operand, dst_operands)
 
-    def lnot(self, *, precision: ALUIntPrecision, src_operand: PeReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def lnot(self, *, precision: ALUIntPrecision, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
         """
         対応: MNCore2.md 7.8 `lnot`
 
@@ -2409,9 +2454,9 @@ class InstructionBuilder:
             入力例: `slnot $lr0 $ln0`
             結果例: `$lr0` が 0 なら dst は 1、0 以外なら 0 になる。ビット反転ではなく真偽値化である点が `not` と違う。
         """
-        return self._emit_pe(f"{precision}lnot {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary(f"{precision}lnot", src_operand, dst_operands)
 
-    def rsqrt(self, *, precision: ALUFloatPrecision, src_operand: PeReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def rsqrt(self, *, precision: ALUFloatPrecision, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
         """
         対応: MNCore2.md 7.8 `rsqrt`
 
@@ -2431,9 +2476,9 @@ class InstructionBuilder:
             入力例: `frsqrt $lr0 $ln0`
             結果例: `$lr0` が 4.0 なら、dst には概ね 0.5 に近い近似値が出る。
         """
-        return self._emit_pe(f"{precision}rsqrt {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary(f"{precision}rsqrt", src_operand, dst_operands)
 
-    def floor(self, *, precision: ALUFloatPrecision, src_operand: PeReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def floor(self, *, precision: ALUFloatPrecision, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
         """
         対応: MNCore2.md 7.8 `floor`
 
@@ -2453,13 +2498,13 @@ class InstructionBuilder:
             入力例: `ffloor $lr0 $ln0`
             結果例: `$lr0` が 3.75 なら、dst には 3.0 が出る。
         """
-        return self._emit_pe(f"{precision}floor {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary(f"{precision}floor", src_operand, dst_operands)
 
     def ftoi(
         self,
         *,
         precision: ALUFloatPrecision,
-        src_operand: PeReadOperand,
+        src_operand: AluReadOperand,
         dst_operands: Sequence[PeWriteOperand],
         unsigned: bool = False,
     ) -> Self:
@@ -2485,9 +2530,9 @@ class InstructionBuilder:
         opcode = f"{precision}ftoi"
         if unsigned:
             opcode = f"u{opcode}"
-        return self._emit_pe(f"{opcode} {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary(opcode, src_operand, dst_operands)
 
-    def bfe(self, *, src_operand: PeReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def bfe(self, *, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
         """
         対応: MNCore2.md 7.8 `bfe`
 
@@ -2507,9 +2552,9 @@ class InstructionBuilder:
             入力例: `hbfe $lm0 $ln0`
             結果例: half block float として格納された入力を、後段の通常 half 演算や debug 表示で扱いやすい extended 形式へ展開する。
         """
-        return self._emit_pe(f"hbfe {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary("hbfe", src_operand, dst_operands)
 
-    def bfn(self, *, precision: ALUBfnPrecision, src_operand: PeReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def bfn(self, *, precision: ALUBfnPrecision, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
         """
         対応: MNCore2.md 7.8 `bfn`
 
@@ -2529,13 +2574,13 @@ class InstructionBuilder:
             入力例: `fbfn $lr0 $ln0`
             結果例: 通常の float ベクトルを、MAU 行列入力向けの block-float 形式へ変換した値が dst に出る。
         """
-        return self._emit_pe(f"{precision}bfn {src_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_alu_unary(f"{precision}bfn", src_operand, dst_operands)
 
     def max(
         self,
         *,
         precision: ALUAnyPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
         unsigned: bool = False,
@@ -2560,15 +2605,13 @@ class InstructionBuilder:
             結果例: `src_x=2.0`, `src_y=5.0` なら dst には 5.0 が出る。
         """
         opcode = f"{'u' if unsigned else ''}{precision}max"
-        return self._emit_pe(
-            f"{opcode} {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(opcode, src_x_operand, src_y_operand, dst_operands)
 
     def min(
         self,
         *,
         precision: ALUAnyPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
         unsigned: bool = False,
@@ -2593,15 +2636,13 @@ class InstructionBuilder:
             結果例: `src_x=2.0`, `src_y=5.0` なら dst には 2.0 が出る。
         """
         opcode = f"{'u' if unsigned else ''}{precision}min"
-        return self._emit_pe(
-            f"{opcode} {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(opcode, src_x_operand, src_y_operand, dst_operands)
 
     def packbit(
         self,
         *,
         precision: ALUAnyPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -2624,15 +2665,13 @@ class InstructionBuilder:
             入力例: 4bit の概念例で `src_x=1010`, `src_y` の MSB=1 とする。
             結果例: `src_x` を左詰めしつつ `src_y` の MSB を取り込み、概念的には `0101` のような packed 値になる。
         """
-        return self._emit_pe(
-            f"{precision}packbit {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}packbit", src_x_operand, src_y_operand, dst_operands)
 
     def and_(
         self,
         *,
         precision: ALUIntPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -2655,15 +2694,13 @@ class InstructionBuilder:
             入力例: `land $lr0 $ls0 $ln0`
             結果例: `0b1100 AND 0b1010 = 0b1000` が dst に出る。
         """
-        return self._emit_pe(
-            f"{precision}and {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}and", src_x_operand, src_y_operand, dst_operands)
 
     def or_(
         self,
         *,
         precision: ALUIntPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -2686,15 +2723,13 @@ class InstructionBuilder:
             入力例: `lor $lr0 $ls0 $ln0`
             結果例: `0b1100 OR 0b1010 = 0b1110` が dst に出る。
         """
-        return self._emit_pe(
-            f"{precision}or {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}or", src_x_operand, src_y_operand, dst_operands)
 
     def xor(
         self,
         *,
         precision: ALUIntPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -2717,15 +2752,13 @@ class InstructionBuilder:
             入力例: `lxor $lr0 $ls0 $ln0`
             結果例: `0b1100 XOR 0b1010 = 0b0110` が dst に出る。
         """
-        return self._emit_pe(
-            f"{precision}xor {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}xor", src_x_operand, src_y_operand, dst_operands)
 
     def add(
         self,
         *,
         precision: ALUIntPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
         unsigned: bool = False,
@@ -2750,15 +2783,13 @@ class InstructionBuilder:
             結果例: `src_x=2`, `src_y=5` なら dst には 7 が出る。
         """
         opcode = f"{'u' if unsigned else ''}{precision}add"
-        return self._emit_pe(
-            f"{opcode} {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(opcode, src_x_operand, src_y_operand, dst_operands)
 
     def sub(
         self,
         *,
         precision: ALUIntPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
         unsigned: bool = False,
@@ -2783,15 +2814,13 @@ class InstructionBuilder:
             結果例: `src_x=9`, `src_y=4` なら dst には 5 が出る。
         """
         opcode = f"{'u' if unsigned else ''}{precision}sub"
-        return self._emit_pe(
-            f"{opcode} {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(opcode, src_x_operand, src_y_operand, dst_operands)
 
     def lsl(
         self,
         *,
         precision: ALUIntPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -2814,15 +2843,13 @@ class InstructionBuilder:
             入力例: `llsl $lr0 $ls0 $ln0`
             結果例: `src_x=3`, `src_y=2` なら dst には `3 << 2 = 12` が出る。
         """
-        return self._emit_pe(
-            f"{precision}lsl {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}lsl", src_x_operand, src_y_operand, dst_operands)
 
     def lsr(
         self,
         *,
         precision: ALUIntPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
         unsigned: bool = False,
@@ -2847,15 +2874,13 @@ class InstructionBuilder:
             結果例: `src_x=16`, `src_y=2` なら dst には 4 が出る。
         """
         opcode = f"{'u' if unsigned else ''}{precision}lsr"
-        return self._emit_pe(
-            f"{opcode} {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(opcode, src_x_operand, src_y_operand, dst_operands)
 
     def bsl(
         self,
         *,
         precision: ALUIntPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -2878,15 +2903,13 @@ class InstructionBuilder:
             入力例: `lbsl $lr0 $ls0 $ln0`
             結果例: `src_x=0b1001`, `src_y=1` なら、ビットは循環左シフトされて `0b0011` 相当になる。
         """
-        return self._emit_pe(
-            f"{precision}bsl {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}bsl", src_x_operand, src_y_operand, dst_operands)
 
     def bsr(
         self,
         *,
         precision: ALUIntPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -2909,15 +2932,13 @@ class InstructionBuilder:
             入力例: `lbsr $lr0 $ls0 $ln0`
             結果例: `src_x=0b1001`, `src_y=1` なら、ビットは循環右シフトされて `0b1100` 相当になる。
         """
-        return self._emit_pe(
-            f"{precision}bsr {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}bsr", src_x_operand, src_y_operand, dst_operands)
 
     def relu(
         self,
         *,
         precision: ALUFloatPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -2940,15 +2961,13 @@ class InstructionBuilder:
             入力例: `frelu $lr0 $ls0 $ln0`
             結果例: `src_x=-1.0`, `src_y=5.0` なら dst は `-0`、`src_x=+1.0` なら dst は 5.0 になる。`src_x` は条件、`src_y` が実データである。
         """
-        return self._emit_pe(
-            f"{precision}relu {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}relu", src_x_operand, src_y_operand, dst_operands)
 
     def relu0(
         self,
         *,
         precision: ALUFloatPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -2971,15 +2990,13 @@ class InstructionBuilder:
             入力例: `frelu0 $lr0 $ls0 $ln0`
             結果例: 振る舞いは `relu` と同じで、`src_x` が負なら `-0`、非負なら `src_y` が通る。
         """
-        return self._emit_pe(
-            f"{precision}relu0 {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}relu0", src_x_operand, src_y_operand, dst_operands)
 
     def relu1(
         self,
         *,
         precision: ALUFloatPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -3002,15 +3019,13 @@ class InstructionBuilder:
             入力例: `frelu1 $lr0 $ls0 $ln0`
             結果例: `src_x` の第 2 MSB が 0 側なら `src_y` を通し、1 側なら `-0` にする。符号ビットではなく別条件ビットを使いたいときに選ぶ。
         """
-        return self._emit_pe(
-            f"{precision}relu1 {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}relu1", src_x_operand, src_y_operand, dst_operands)
 
     def relu2(
         self,
         *,
         precision: ALUFloatPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -3033,15 +3048,13 @@ class InstructionBuilder:
             入力例: `frelu2 $lr0 $ls0 $ln0`
             結果例: `src_x` の第 3 MSB を条件として `src_y` を通すか `-0` にする。
         """
-        return self._emit_pe(
-            f"{precision}relu2 {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}relu2", src_x_operand, src_y_operand, dst_operands)
 
     def relu3(
         self,
         *,
         precision: ALUFloatPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -3064,15 +3077,13 @@ class InstructionBuilder:
             入力例: `frelu3 $lr0 $ls0 $ln0`
             結果例: `src_x` の第 4 MSB を条件として `src_y` を通すか `-0` にする。
         """
-        return self._emit_pe(
-            f"{precision}relu3 {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}relu3", src_x_operand, src_y_operand, dst_operands)
 
     def lrelud(
         self,
         *,
         precision: ALUFloatPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -3095,15 +3106,13 @@ class InstructionBuilder:
             入力例: `flrelud $lr0 $ls0 $ln0`
             結果例: `src_x=-1.0`, `src_y=8.0` なら dst は 4.0、`src_x=+1.0` なら 8.0 になる。
         """
-        return self._emit_pe(
-            f"{precision}lrelud {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}lrelud", src_x_operand, src_y_operand, dst_operands)
 
     def lreluo(
         self,
         *,
         precision: ALUFloatPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -3126,15 +3135,13 @@ class InstructionBuilder:
             入力例: `flreluo $lr0 $ls0 $ln0`
             結果例: `src_x=-1.0`, `src_y=8.0` なら dst は 1.0、`src_x=+1.0` なら 8.0 になる。
         """
-        return self._emit_pe(
-            f"{precision}lreluo {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}lreluo", src_x_operand, src_y_operand, dst_operands)
 
     def ilrelud(
         self,
         *,
         precision: ALUFloatPrecision,
-        src_x_operand: PeReadOperand,
+        src_x_operand: AluReadOperand,
         src_y_operand: PeReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
@@ -3160,6 +3167,4 @@ class InstructionBuilder:
         補足:
             manual でも「指数操作として理解する」とされており、`lrelud` と同一の数値規則ではない。
         """
-        return self._emit_pe(
-            f"{precision}ilrelud {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
-        )
+        return self._emit_alu_binary(f"{precision}ilrelud", src_x_operand, src_y_operand, dst_operands)

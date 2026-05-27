@@ -14,6 +14,27 @@ MN-Core 2 の VSM テキストを Python から組み立てるための小さな
 - debug 文と疑似構文は、レンダリング時に用途を示すコメントを自動で付ける
 - 各 builder メソッドには `MNCore2.md` の対応節を踏まえた日本語 docstring を付けている
 
+メモリ種別の整理:
+
+- `PDM` / `DRAM` / `DAR` は MV 系の上位メモリと間接参照表を表す
+- `L2BM` / `L1BM` は放送・分配・縮約の中継メモリを表す
+- `LM0` / `LM1` / `GRF0` / `GRF1` / `TReg` は PE ローカル資源を表す
+- `Matrix` / `MatrixVector` は MAU の行列レジスタ面を表す
+
+制約の扱い:
+
+- wrapper は構文と型の整理を主目的とし、MV 多重発行制約、PE ハザード待ち、並列実行条件までは自動検証しない
+- ALU/MAU の精度縮減やマスクフラグ規則も、builder は命令文字列を作るだけで意味検証はしない
+
+現在入っている主な guard:
+
+- `wait(tag=0)` は `ValueError` にする
+- `Nowrite()` は単独の dst にしか置けない
+- ALU の固定値入力は第 1 入力だけに許可する
+- `MREADF` は ALU の第 1 入力以外では `ValueError` にする
+- `hmread` は `Matrix.half_read(...)` 相当の `ll` 幅かつ偶数 addr を要求する
+- `LM0/LM1/GRF0/GRF1.auto(..., adri=...)` は `vector=True` を必須にする
+
 ## 例
 
 ```python
@@ -95,6 +116,7 @@ PseudoStatement pseudo
 - `l1bmm4@<mabadr>` は `l1bmm4_at(...)`
 - `nop/2` は `nop_repeat(repeat=2)`
 - flat mode は `LM0.flat([a0, a1, a2, a3])` や `GRF0.flat([...])` の helper を持つ
+- 半精度行列アクセスは `Matrix.half(...)` と `Matrix.half_read(...)` で安全側に組み立てられる
 - `/1000` のような派生表記は `cycle_mask="1000"` で付けられる
 - raw な疑似構文が必要なら `pseudo_raw(...)` を使う
 

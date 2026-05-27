@@ -1,4 +1,10 @@
-"""MN-Core 2 の命令オペランドを表す型付きラッパ。"""
+"""MN-Core 2 の命令オペランドを表す型付きラッパ。
+
+`MNCore2.md` 2.4 / 4 章に合わせて、PDM・DRAM・DAR・L2BM・L1BM・
+LM0/LM1・GRF0/GRF1・行列レジスタなどの空間を別 class に分けている。
+この層は主にオペランド文字列の整形を担い、アラインメントやハザード、
+精度縮減の合法性までは検証しない。
+"""
 
 from __future__ import annotations
 
@@ -15,7 +21,10 @@ class Renderable(Protocol):
 
 
 class WordWidth(str, Enum):
-    """PE 側オペランドの語長指定。`l` は長語、`ll` は 2 長語。"""
+    """PE 側オペランドの語長指定。`l` は長語、`ll` は 2 長語。
+
+    LM/GRF は単語アドレス空間だが、文法上の幅接頭辞はアクセス語長を表す。
+    """
 
     LONG = "l"
     DOUBLE_LONG = "ll"
@@ -96,7 +105,11 @@ def _format_flat_addrs(addresses: Sequence[int]) -> str:
 
 
 def _append_cycle_mask(suffix: str, cycle_mask: str | None) -> str:
-    """チュートリアルに現れる `/1000` のようなサイクル指定を付ける。"""
+    """チュートリアルに現れる `/1000` のようなサイクル指定を付ける。
+
+    これは manual 本文の正式構文というより tutorial 由来の派生表記で、
+    4 サイクル中どこを有効にするかを文字列で保持する用途に使う。
+    """
 
     if cycle_mask is None:
         return suffix
@@ -105,9 +118,18 @@ def _append_cycle_mask(suffix: str, cycle_mask: str | None) -> str:
     return f"{suffix}/{cycle_mask}"
 
 
+def _validate_vector_args(*, vector: bool, adri: int | None) -> None:
+    if adri is not None and not vector:
+        raise ValueError("adri requires vector=True")
+
+
 @dataclass(frozen=True)
 class PDM(Operand):
-    """PDM オペランド。`$p<addr>[@<group>]` を表す。"""
+    """PDM オペランド。`$p<addr>[@<group>]` を表す。
+
+    PDM はグループごとの上位メモリで、主に DRAM / L2BM との MV 転送に使う。
+    `group` を省略した表記は manual 上「全グループの同一アドレス」を意味する。
+    """
 
     addr: int
     group: int | None = None
@@ -119,7 +141,11 @@ class PDM(Operand):
 
 @dataclass(frozen=True)
 class DRAM(Operand):
-    """DRAM オペランド。直接アドレスと DAR 間接参照の両方を扱う。"""
+    """DRAM オペランド。直接アドレスと DAR 間接参照の両方を扱う。
+
+    `$d...` は長語単位の直接参照、`$di...` は DAR を介した間接参照であり、
+    間接側は 16 長語単位で次の DAR エントリへ進む前提を持つ。
+    """
 
     addr: int | None = None
     dar_addr: int | None = None
@@ -135,7 +161,11 @@ class DRAM(Operand):
 
 @dataclass(frozen=True)
 class DAR(Operand):
-    """DAR エントリ参照。`$dar<addr>`。"""
+    """DAR エントリ参照。`$dar<addr>`。
+
+    DAR は DRAM 間接参照のベースアドレス表で、各エントリは
+    32 bit の「16 長語単位アドレス」を表す。
+    """
 
     addr: int
 
@@ -145,7 +175,12 @@ class DAR(Operand):
 
 @dataclass(frozen=True)
 class L2BM(Operand):
-    """L2BM オペランド。MV 用の group/l2b 修飾も保持する。"""
+    """L2BM オペランド。MV 用の group/l2b 修飾も保持する。
+
+    L2BM はグループ内外の放送・分配・縮約の中継点になる中間メモリで、
+    MV 側では `@<group>.<l2b>` や `@.<l2b>` を伴う表記を使う。
+    PE の L2BM 命令では通常 `$lc<addr>` のみを使う。
+    """
 
     addr: int
     group: int | None = None
@@ -163,7 +198,11 @@ class L2BM(Operand):
 
 @dataclass(frozen=True)
 class L1BM(Operand):
-    """L1BM オペランド。`$lb...` と `$llb...`、`i` 折り返しを表す。"""
+    """L1BM オペランド。`$lb...` と `$llb...`、`i` 折り返しを表す。
+
+    L1BM は PE 群への放送・MAB 単位転送・縮約に使うローカルブロードキャスト
+    メモリで、`indirect=True` は折り返しレジスタ `lbi` を表す。
+    """
 
     addr: int | None = None
     width: WordWidth = WordWidth.LONG
@@ -182,6 +221,8 @@ class LM0(Operand):
     """LM0 オペランド。
 
     `auto()` は SDM 3.3 の auto-stride mode、`flat()` は flat mode を表す。
+    LM0 は PE の主作業メモリで、T レジスタ間接参照を持てるのはこの空間だけ。
+    `j<madpe>` による MAB 内アドレス修飾と `t...` は manual 上同時使用できない。
     """
 
     suffix: str
@@ -198,6 +239,12 @@ class LM0(Operand):
         madpe: int | None = None,
         cycle_mask: str | None = None,
     ) -> LM0:
+        """Auto-stride mode の LM0 を生成する。
+
+        `vector=True` は `v[adri]` を、`madpe` は `j<madpe>` を表す。
+        """
+
+        _validate_vector_args(vector=vector, adri=adri)
         suffix = str(addr)
         if vector:
             suffix += "v"
@@ -217,7 +264,10 @@ class LM0(Operand):
         madpe: int | None = None,
         cycle_mask: str | None = None,
     ) -> LM0:
-        """Flat mode の LM0 を生成する。形式は `[a0,a1,a2,a3]`。"""
+        """Flat mode の LM0 を生成する。形式は `[a0,a1,a2,a3]`。
+
+        manual の flat mode と同じく、4 サイクルぶんのアドレスを直接固定する。
+        """
 
         suffix = _format_flat_addrs(addresses)
         if madpe is not None:
@@ -235,6 +285,9 @@ class LM0(Operand):
         adri: int | None = None,
         cycle_mask: str | None = None,
     ) -> LM0:
+        """T レジスタ間接参照つき auto-stride LM0 を生成する。"""
+
+        _validate_vector_args(vector=vector, adri=adri)
         suffix = f"t{addr}"
         if vector:
             suffix += "v"
@@ -275,7 +328,10 @@ class LM0(Operand):
 
 @dataclass(frozen=True)
 class LM1(Operand):
-    """LM1 オペランド。`auto()` と `flat()` を持つ。"""
+    """LM1 オペランド。`auto()` と `flat()` を持つ。
+
+    LM1 は LM0 と同系統のローカルメモリだが、T レジスタ間接参照は持たない。
+    """
 
     suffix: str
     width: WordWidth = WordWidth.LONG
@@ -291,6 +347,9 @@ class LM1(Operand):
         madpe: int | None = None,
         cycle_mask: str | None = None,
     ) -> LM1:
+        """Auto-stride mode の LM1 を生成する。"""
+
+        _validate_vector_args(vector=vector, adri=adri)
         suffix = str(addr)
         if vector:
             suffix += "v"
@@ -310,7 +369,10 @@ class LM1(Operand):
         madpe: int | None = None,
         cycle_mask: str | None = None,
     ) -> LM1:
-        """Flat mode の LM1 を生成する。"""
+        """Flat mode の LM1 を生成する。
+
+        4 サイクルぶんのアドレスを `[a0,a1,a2,a3]` で固定する。
+        """
 
         suffix = _format_flat_addrs(addresses)
         if madpe is not None:
@@ -334,7 +396,12 @@ class LM1(Operand):
 
 @dataclass(frozen=True)
 class GRF0(Operand):
-    """GRF0 オペランド。flat mode と `/1000` 派生表記を補助する。"""
+    """GRF0 オペランド。flat mode と `/1000` 派生表記を補助する。
+
+    GRF0 は ALU / MAU の主要な入出力先で、アドレス空間は 512 単語である。
+    長語アクセスでは 2 の倍数、2 長語アクセスでは 4 の倍数アラインが必要だが、
+    その検証は builder 側ではなく呼び出し側責務としている。
+    """
 
     suffix: str
     width: WordWidth = WordWidth.LONG
@@ -349,6 +416,9 @@ class GRF0(Operand):
         adri: int | None = None,
         cycle_mask: str | None = None,
     ) -> GRF0:
+        """Auto-stride mode の GRF0 を生成する。"""
+
+        _validate_vector_args(vector=vector, adri=adri)
         suffix = str(addr)
         if vector:
             suffix += "v"
@@ -385,7 +455,10 @@ class GRF0(Operand):
 
 @dataclass(frozen=True)
 class GRF1(Operand):
-    """GRF1 オペランド。flat mode と `/1000` 派生表記を補助する。"""
+    """GRF1 オペランド。flat mode と `/1000` 派生表記を補助する。
+
+    制約と役割は GRF0 と同じで、主に第 2 系統の汎用レジスタファイルとして使う。
+    """
 
     suffix: str
     width: WordWidth = WordWidth.LONG
@@ -400,6 +473,9 @@ class GRF1(Operand):
         adri: int | None = None,
         cycle_mask: str | None = None,
     ) -> GRF1:
+        """Auto-stride mode の GRF1 を生成する。"""
+
+        _validate_vector_args(vector=vector, adri=adri)
         suffix = str(addr)
         if vector:
             suffix += "v"
@@ -436,7 +512,10 @@ class GRF1(Operand):
 
 @dataclass(frozen=True)
 class TReg(Operand):
-    """T レジスタ。命令上は現在サイクルに対応する 2 長語を表す。"""
+    """T レジスタ。命令上は現在サイクルに対応する 2 長語を表す。
+
+    文法上 `l` / `ll` は書けるが、manual では常に 2 長語アクセスとして扱われる。
+    """
 
     width: WordWidth = WordWidth.LONG
 
@@ -446,7 +525,10 @@ class TReg(Operand):
 
 @dataclass(frozen=True)
 class MaskRegister(Operand):
-    """マスクレジスタ参照。`$omr<addr>`。"""
+    """マスクレジスタ参照。`$omr<addr>`。
+
+    1 エントリは 4 サイクル x 4 bit を持ち、書き込み抑止とゼロフラッシュに使う。
+    """
 
     addr: int
 
@@ -456,11 +538,30 @@ class MaskRegister(Operand):
 
 @dataclass(frozen=True)
 class Matrix(Operand):
-    """行列レジスタの行または列。`$lx0`, `$lly2` などを表す。"""
+    """行列レジスタの行または列。`$lx0`, `$lly2` などを表す。
+
+    物理的には各面 16 行を持ち、論理サイズは MAU 精度に応じて 4x4 / 8x8 / 16x16
+    として解釈される。
+    """
 
     bank: MatrixBank
     addr: int
     width: WordWidth = WordWidth.LONG
+
+    @classmethod
+    def half(cls, bank: MatrixBank, addr: int, *, double_long: bool = False) -> Matrix:
+        """半精度行列アクセス向けの行列オペランドを生成する。"""
+
+        width = WordWidth.DOUBLE_LONG if double_long else WordWidth.LONG
+        if width is WordWidth.DOUBLE_LONG and addr % 2 != 0:
+            raise ValueError("double-long half matrix access requires an even addr")
+        return cls(bank=bank, addr=addr, width=width)
+
+    @classmethod
+    def half_read(cls, bank: MatrixBank, addr: int) -> Matrix:
+        """`hmread` 用の合法な半精度行列オペランドを生成する。"""
+
+        return cls.half(bank, addr, double_long=True)
 
     def render(self) -> str:
         return f"${self.width.value}{self.bank.value}{self.addr}"
@@ -468,7 +569,10 @@ class Matrix(Operand):
 
 @dataclass(frozen=True)
 class MatrixVector(Operand):
-    """MAU の `$lx` / `$ly` ベクトル入力側を表す。"""
+    """MAU の `$lx` / `$ly` ベクトル入力側を表す。
+
+    行列ベクトル積和命令で、面全体を入力ベクトル側として参照するときに使う。
+    """
 
     bank: MatrixBank
 
@@ -478,7 +582,11 @@ class MatrixVector(Operand):
 
 @dataclass(frozen=True)
 class Forwarding(Operand):
-    """フォワーディングパス入力。`$mauf`, `$aluf` など。"""
+    """フォワーディングパス入力。`$mauf`, `$aluf` など。
+
+    いずれも直前 step の出力ラッチを読む。manual では `nop` / `noforward` の step
+    では更新されない。
+    """
 
     kind: ForwardingKind
 
@@ -488,7 +596,10 @@ class Forwarding(Operand):
 
 @dataclass(frozen=True)
 class FixedInput(Operand):
-    """固定値入力。`$peid`, `$l2bid` など。"""
+    """固定値入力。`$peid`, `$l2bid` など。
+
+    manual 上は ALU 第 1 入力専用で、実行位置や固定ビットパターンを供給する。
+    """
 
     kind: FixedInputKind
 
@@ -498,7 +609,10 @@ class FixedInput(Operand):
 
 @dataclass(frozen=True)
 class LM0Base(Operand):
-    """LM0 ベースアドレスレジスタ書き込みオペランド。"""
+    """LM0 ベースアドレスレジスタ書き込みオペランド。
+
+    書き込み時は MSB 側 1 語の LSB 12 bit が有効値として使われる。
+    """
 
     long_word: bool = True
 
@@ -508,7 +622,10 @@ class LM0Base(Operand):
 
 @dataclass(frozen=True)
 class LM1Base(Operand):
-    """LM1 ベースアドレスレジスタ書き込みオペランド。"""
+    """LM1 ベースアドレスレジスタ書き込みオペランド。
+
+    動作は LM0 BAR と同様で、LM1 の最終アドレスへ暗黙加算される。
+    """
 
     long_word: bool = True
 
@@ -518,7 +635,10 @@ class LM1Base(Operand):
 
 @dataclass(frozen=True)
 class Nowrite(Operand):
-    """結果を破棄する `nowrite`。"""
+    """結果を破棄する `nowrite`。
+
+    結果をフォワーディングだけに残し、他の出力オペランドとの同時指定は許されない。
+    """
 
     def render(self) -> str:
         return "$nowrite"
@@ -537,7 +657,8 @@ SUBPEID: Final[FixedInput] = FixedInput(FixedInputKind.SUBPEID)
 MSB1: Final[FixedInput] = FixedInput(FixedInputKind.MSB1)
 
 
-PeReadOperand: TypeAlias = LM0 | LM1 | GRF0 | GRF1 | TReg | Forwarding | FixedInput
+PeReadOperand: TypeAlias = LM0 | LM1 | GRF0 | GRF1 | TReg | Forwarding
+AluReadOperand: TypeAlias = PeReadOperand | FixedInput
 PeWriteOperand: TypeAlias = LM0 | LM1 | GRF0 | GRF1 | TReg | MaskRegister | LM0Base | LM1Base | Nowrite
 MvOperand: TypeAlias = PDM | DRAM | L2BM
 MatrixOperand: TypeAlias = Matrix | MatrixVector

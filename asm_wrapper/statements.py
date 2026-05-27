@@ -51,7 +51,11 @@ class PseudoStatement(SimpleStatement):
 
 @dataclass(frozen=True)
 class CycleStatement(Statement):
-    """同一 cycle に同時発行する複数命令を束ねた statement。"""
+    """同一 cycle に同時発行する複数命令を束ねた statement。
+
+    想定しているのは 1 step 内の PE 命令束ねだけで、MV / debug / pseudo 文は入らない。
+    並列実行条件そのものは builder では検証しない。
+    """
 
     items: tuple[InstructionStatement, ...]
     kind: ClassVar[StatementKind] = "cycle"

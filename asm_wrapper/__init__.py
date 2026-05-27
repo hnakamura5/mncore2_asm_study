@@ -16,6 +16,7 @@ from .debug import (
 )
 from .operands import (
     ALUF,
+    AluReadOperand,
     L1BID,
     L2BID,
     LBF,
@@ -58,6 +59,7 @@ from .statements import (
 
 __all__ = [
     "ALUF",
+    "AluReadOperand",
     "CycleStatement",
     "DAR",
     "DebugDataType",

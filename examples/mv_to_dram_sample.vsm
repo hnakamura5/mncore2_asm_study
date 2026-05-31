@@ -1,0 +1,9 @@
+imm ui"0x01234567" $lr0
+nop/2
+l1bmd $lr0 $lb0
+nop/3
+l2bmd $lb0 $lc0
+nop/3
+mvp/n64 $lc0 $d0
+nop/12
+d getd $d0n0 1

@@ -3,7 +3,7 @@
     "build": {
         "dockerfile": "Dockerfile"
     },
-    "postCreateCommand": "uv sync",
+    "postCreateCommand": "uv sync && cd mncore_judge && uv pip install -r ./judge-py/requirements.txt",
     "customizations": {
         "vscode": {
             "extensions": [

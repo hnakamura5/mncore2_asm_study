@@ -1,0 +1,5 @@
+# ======= YOUR VSM WILL BE INSERTED HERE =======
+
+# ======= Output =======
+# ======= Out(0): LM0(0) at n0c0b0m0p0 / Double =======
+d getd $lm0n0c0b0m0p0 1 # expect=[0.0] / Double @[0]

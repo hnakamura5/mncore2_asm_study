@@ -1,0 +1,26 @@
+imm ui"0" $n0
+imm ui"0x48656c6c" $r2
+imm ui"0x6f2c2077" $r3
+imm ui"0x6f726c64" $r0
+imm ui"0x21000000" $r1
+
+sor $subpeid $n0 $omr1
+nop
+lpassa $lr2 $lr0/$imr1
+
+nop/2
+
+# d get $lr0n0c0b0m0 1
+
+l1bmrsbor $llr0v $llb0
+nop/3
+
+# d get $lb0n0c0b0 1
+
+l2bmrsbor $lb0 $lc0
+
+# d get $lc0n0c0 1
+
+nop/3
+mvp/n64i01 $lc0 $d0
+nop; wait i01

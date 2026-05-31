@@ -1,0 +1,13 @@
+#/bin/sh
+
+# set -x
+
+IMAGE_NAME=mncore-challenge
+
+if [ -z "$(docker image ls -q ${IMAGE_NAME})" ]; then
+  echo "Building docker image ${IMAGE_NAME}..."
+  docker build --platform linux/amd64 -t ${IMAGE_NAME} $(dirname $0)
+  echo "--------------------------------------"
+fi
+
+docker run --mount type=bind,src=.,dst=/root -it --rm "${IMAGE_NAME}" python3 /judge-py/judge.py $@

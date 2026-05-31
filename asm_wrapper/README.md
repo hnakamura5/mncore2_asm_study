@@ -2,6 +2,69 @@
 
 MN-Core 2 の VSM テキストを Python から組み立てるための小さなラッパ。
 
+## 実行ラッパの使い方
+
+このリポジトリでは、`InstructionBuilder` が生成した VSM をそのまま同梱アセンブラとエミュレータへ流す実行ラッパーも用意している。
+エントリポイントはリポジトリルートの `main.py` で、内部実装は `asm_wrapper/runner.py` にある。
+
+基本形:
+
+```sh
+python main.py <input>
+```
+
+`<input>` に指定できるもの:
+
+- `.py`: `build()` 関数、または `builder` 変数、または `source` 変数を持つ Python ファイル
+- `.vsm`: そのままアセンブルして実行する VSM ファイル
+
+Python 入力で受け付ける返り値:
+
+- `InstructionBuilder`
+- `str` として表した VSM ソース
+
+単体実行の例:
+
+```sh
+python main.py examples/peid_lm0_sample.py
+python main.py examples/mv_to_dram_sample.py
+python main.py examples/mv_to_dram_sample.vsm
+```
+
+主なオプション:
+
+- `--testcase FILE`: render した VSM を `judge.py` に渡し、testcase 差し込み込みで judge 互換の検証を行う
+- `--out-dir DIR`: 生成した `.vsm`, `.asm`, `.dmp` を指定ディレクトリへ残す
+- `--keep-temp`: `--out-dir` を使わないとき、一時ディレクトリを削除せず残す
+- `--device noto|lime`: アセンブラとエミュレータのデバイス設定を切り替える
+- `--print-vsm`: 実行前の VSM を stderr に出す
+- `--print-asm`: エミュレータへ渡す `.asm` を stderr に出す
+- `--enable-get`, `--enable-set`, `--seccomp`, `--seccomp-log`: `--testcase` 時に `judge.py` へそのまま渡す
+
+`--testcase` を使う例:
+
+```sh
+python main.py examples/peid_lm0_sample.py --testcase examples/peid_lm0_testcase.vsm
+```
+
+`--out-dir` を使う例:
+
+```sh
+python main.py examples/mv_to_dram_sample.vsm --out-dir .mncore-out
+```
+
+この場合、`.mncore-out/` 配下に次のファイルが作られる。
+
+- render または入力そのままの `.vsm`
+- アセンブラ出力を実行用に整形した `.asm`
+- エミュレータ dump の `.dmp`
+
+補足:
+
+- `--testcase` と `--print-asm` は同時に使えない
+- 同梱の `assemble3` と `gpfn3_package_main` に実行権限が無い場合は `chmod +x` が必要
+- judge 互換モードの実体は `mncore_judge/judge-py/judge.py` の subprocess 実行であり、採点ロジックは二重実装していない
+
 ## 方針
 
 - 命令列は `InstructionBuilder` が保持する
@@ -107,6 +170,13 @@ DebugStatement debug
 PseudoStatement pseudo
 PseudoStatement pseudo
 ```
+
+実行可能なサンプルは `examples/` に置いてある。
+
+- `examples/peid_lm0_sample.py`: PE ID を LM0 に書いて dump する最小サンプル
+- `examples/peid_lm0_testcase.vsm`: 上のサンプルを `--testcase` で検証するための testcase
+- `examples/mv_to_dram_sample.py`: `L1BM -> L2BM -> DRAM` 転送を含む少し大きいサンプル
+- `examples/mv_to_dram_sample.vsm`: 上のサンプルを render 済み VSM として置いたもの
 
 ## 命名上の注意
 

@@ -1,5 +1,4 @@
-def main():
-    print("Hello from mncore-asm-study!")
+from asm_wrapper.runner import main
 
 
 if __name__ == "__main__":

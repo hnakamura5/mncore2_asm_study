@@ -1,0 +1,11 @@
+numpy==1.26.4
+
+# For formatter
+mypy==0.991
+pysen==0.10.1
+pysen-plugins==2023.10.26
+black==22.3.0
+flake8==3.9.2
+flake8-bugbear==22.4.25
+flake8-functions==0.0.8
+isort==5.1.4

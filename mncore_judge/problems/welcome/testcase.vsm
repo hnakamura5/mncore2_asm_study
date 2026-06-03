@@ -1,0 +1,22 @@
+# ======= In(0): ((8:1, 2_W:1))@LM0 / Int =======
+d set $lm0 1 000000260000001C # values=[38, 28] / Int @[0],[1]
+d set $lm2 1 0000000E0000002A # values=[14, 42] / Int @[2],[3]
+d set $lm4 1 0000000700000014 # values=[7, 20] / Int @[4],[5]
+d set $lm6 1 0000002600000012 # values=[38, 18] / Int @[6],[7]
+d set $lm8 1 000000160000000A # values=[22, 10] / Int @[8],[9]
+d set $lm10 1 0000000A00000017 # values=[10, 23] / Int @[10],[11]
+d set $lm12 1 0000002300000027 # values=[35, 39] / Int @[12],[13]
+d set $lm14 1 0000001700000002 # values=[23, 2] / Int @[14],[15]
+
+# ======= YOUR VSM WILL BE INSERTED HERE =======
+
+# ======= Output =======
+# ======= Out(0): ((8:1, 2_W:1))@LM1 / Int =======
+d getd $ln0n0c0b0m0p0 1 # expect=[39, 29] / Int @[0],[1]
+d getd $ln2n0c0b0m0p0 1 # expect=[15, 43] / Int @[2],[3]
+d getd $ln4n0c0b0m0p0 1 # expect=[8, 21] / Int @[4],[5]
+d getd $ln6n0c0b0m0p0 1 # expect=[39, 19] / Int @[6],[7]
+d getd $ln8n0c0b0m0p0 1 # expect=[23, 11] / Int @[8],[9]
+d getd $ln10n0c0b0m0p0 1 # expect=[11, 24] / Int @[10],[11]
+d getd $ln12n0c0b0m0p0 1 # expect=[36, 40] / Int @[12],[13]
+d getd $ln14n0c0b0m0p0 1 # expect=[24, 3] / Int @[14],[15]

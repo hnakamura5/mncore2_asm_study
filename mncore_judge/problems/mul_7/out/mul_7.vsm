@@ -1,0 +1,6 @@
+imm i"0x40e00000" $ls64v
+smax $lm0v $aluf $omr1; fvfma -$aluf $aluf $aluf $lr72v
+smax $lm8v $ls64v $omr1; fvfma $aluf $ls64v $mauf $ln0v/$imr1
+smax $lm16v $ls64v $omr1; fvfma $aluf $ls64v $lr72v $ln8v/$imr1
+smax $lm24v $ls64v $omr1; fvfma $aluf $ls64v $lr72v $ln16v/$imr1
+fvfma $aluf $ls64v $lr72v $ln24v/$imr1

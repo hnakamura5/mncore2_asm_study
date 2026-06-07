@@ -16,8 +16,7 @@ from typing import Final, Literal, Protocol, Sequence, TypeAlias
 class Renderable(Protocol):
     """VSM 文字列へ変換できる最小 protocol。"""
 
-    def render(self) -> str:
-        ...
+    def render(self) -> str: ...
 
 
 class WordWidth(str, Enum):
@@ -86,6 +85,7 @@ ALUBfnPrecision: TypeAlias = Literal["d", "f", "g", "h"]
 ALUAnyPrecision: TypeAlias = Literal["d", "f", "h", "l", "i", "s"]
 
 MAUHalfSelect: TypeAlias = Literal["u", "d"]
+WriteMaskGuardSuffix: TypeAlias = Literal["t", "p"]
 
 
 @dataclass(frozen=True)
@@ -105,10 +105,11 @@ def _format_flat_addrs(addresses: Sequence[int]) -> str:
 
 
 def _append_cycle_mask(suffix: str, cycle_mask: str | None) -> str:
-    """チュートリアルに現れる `/1000` のようなサイクル指定を付ける。
+    """`/1000` のような 4 bit 固定マスク suffix を付ける。
 
-    これは manual 本文の正式構文というより tutorial 由来の派生表記で、
-    4 サイクル中どこを有効にするかを文字列で保持する用途に使う。
+    manual 3.6.2.1 の単一行書き込みマスク固定値指定に対応する。既存 API では
+    `cycle_mask` という名前を残しているが、実際には 4 サイクルぶんの固定マスク値
+    を文字列で保持する用途である。
     """
 
     if cycle_mask is None:
@@ -116,6 +117,34 @@ def _append_cycle_mask(suffix: str, cycle_mask: str | None) -> str:
     if len(cycle_mask) != 4 or any(ch not in "01" for ch in cycle_mask):
         raise ValueError("cycle_mask must be a 4-character bit string such as '1000'")
     return f"{suffix}/{cycle_mask}"
+
+
+def _validate_write_mask_pattern(mask_pattern: str) -> None:
+    if len(mask_pattern) != 4 or any(ch not in "01" for ch in mask_pattern):
+        raise ValueError("mask_pattern must be a 4-character bit string such as '1000'")
+
+
+def _render_write_mask_suffix(
+    *,
+    mask_pattern: str | None,
+    register_addr: int | None,
+    double_long: bool,
+    guard_suffix: WriteMaskGuardSuffix | None,
+) -> str:
+    if (mask_pattern is None) == (register_addr is None):
+        raise ValueError("Specify exactly one of mask_pattern or register_addr")
+
+    prefix = "ll" if double_long else ""
+    if mask_pattern is not None:
+        _validate_write_mask_pattern(mask_pattern)
+        body = f"{prefix}{mask_pattern}"
+    else:
+        assert register_addr is not None
+        if not 1 <= register_addr <= 15:
+            raise ValueError("register_addr must be an integer from 1 to 15")
+        body = f"${prefix}imr{register_addr}"
+
+    return body if guard_suffix is None else f"{body}{guard_suffix}"
 
 
 def _validate_vector_args(*, vector: bool, adri: int | None) -> None:
@@ -437,7 +466,10 @@ class GRF0(Operand):
     ) -> GRF0:
         """Flat mode の GRF0 を生成する。"""
 
-        return cls(suffix=_append_cycle_mask(_format_flat_addrs(addresses), cycle_mask), width=width)
+        return cls(
+            suffix=_append_cycle_mask(_format_flat_addrs(addresses), cycle_mask),
+            width=width,
+        )
 
     @classmethod
     def raw(
@@ -494,7 +526,10 @@ class GRF1(Operand):
     ) -> GRF1:
         """Flat mode の GRF1 を生成する。"""
 
-        return cls(suffix=_append_cycle_mask(_format_flat_addrs(addresses), cycle_mask), width=width)
+        return cls(
+            suffix=_append_cycle_mask(_format_flat_addrs(addresses), cycle_mask),
+            width=width,
+        )
 
     @classmethod
     def raw(
@@ -581,6 +616,22 @@ class MatrixVector(Operand):
 
 
 @dataclass(frozen=True)
+class MauNegatedOperand(Operand):
+    """MAU の非行列入力に付く `-<src>` を表す。"""
+
+    operand: PeReadOperand
+
+    def render(self) -> str:
+        return f"-{self.operand.render()}"
+
+
+def negate_mau_input(operand: PeReadOperand) -> MauNegatedOperand:
+    """MAU 入力オペランドへ符号反転指定を付ける。"""
+
+    return MauNegatedOperand(operand)
+
+
+@dataclass(frozen=True)
 class Forwarding(Operand):
     """フォワーディングパス入力。`$mauf`, `$aluf` など。
 
@@ -644,6 +695,89 @@ class Nowrite(Operand):
         return "$nowrite"
 
 
+@dataclass(frozen=True)
+class WriteMaskedOperand(Operand):
+    """書き込み先 PE メモリオペランドへの単一行書き込みマスク適用。"""
+
+    operand: MaskablePeWriteOperand
+    mask_suffix: str
+
+    @classmethod
+    def fixed(
+        cls,
+        operand: MaskablePeWriteOperand,
+        mask_pattern: str,
+        *,
+        double_long: bool = False,
+        guard_suffix: WriteMaskGuardSuffix | None = None,
+    ) -> WriteMaskedOperand:
+        return cls(
+            operand=operand,
+            mask_suffix=_render_write_mask_suffix(
+                mask_pattern=mask_pattern,
+                register_addr=None,
+                double_long=double_long,
+                guard_suffix=guard_suffix,
+            ),
+        )
+
+    @classmethod
+    def register(
+        cls,
+        operand: MaskablePeWriteOperand,
+        register_addr: int,
+        *,
+        double_long: bool = False,
+        guard_suffix: WriteMaskGuardSuffix | None = None,
+    ) -> WriteMaskedOperand:
+        return cls(
+            operand=operand,
+            mask_suffix=_render_write_mask_suffix(
+                mask_pattern=None,
+                register_addr=register_addr,
+                double_long=double_long,
+                guard_suffix=guard_suffix,
+            ),
+        )
+
+    def render(self) -> str:
+        return f"{self.operand.render()}/{self.mask_suffix}"
+
+
+def with_write_mask_pattern(
+    operand: MaskablePeWriteOperand,
+    mask_pattern: str,
+    *,
+    double_long: bool = False,
+    guard_suffix: WriteMaskGuardSuffix | None = None,
+) -> WriteMaskedOperand:
+    """出力オペランドへ固定値の単一行書き込みマスクを付ける。"""
+
+    return WriteMaskedOperand.fixed(
+        operand,
+        mask_pattern,
+        double_long=double_long,
+        guard_suffix=guard_suffix,
+    )
+
+
+def with_write_mask_register(
+    operand: MaskablePeWriteOperand,
+    register_addr: int,
+    *,
+    double_long: bool = False,
+    guard_suffix: WriteMaskGuardSuffix | None = None,
+) -> WriteMaskedOperand:
+    """出力オペランドへ `$imr<addr>` 形式の単一行書き込みマスクを付ける。"""
+
+    return WriteMaskedOperand.register(
+        operand,
+        register_addr,
+        double_long=double_long,
+        guard_suffix=guard_suffix,
+    )
+
+
 MAUF: Final[Forwarding] = Forwarding(ForwardingKind.MAU)
 ALUF: Final[Forwarding] = Forwarding(ForwardingKind.ALU)
 LBF: Final[Forwarding] = Forwarding(ForwardingKind.L1BM)
@@ -659,6 +793,10 @@ MSB1: Final[FixedInput] = FixedInput(FixedInputKind.MSB1)
 
 PeReadOperand: TypeAlias = LM0 | LM1 | GRF0 | GRF1 | TReg | Forwarding
 AluReadOperand: TypeAlias = PeReadOperand | FixedInput
-PeWriteOperand: TypeAlias = LM0 | LM1 | GRF0 | GRF1 | TReg | MaskRegister | LM0Base | LM1Base | Nowrite
+MauReadOperand: TypeAlias = PeReadOperand | MauNegatedOperand
+MaskablePeWriteOperand: TypeAlias = (
+    LM0 | LM1 | GRF0 | GRF1 | TReg | MaskRegister | LM0Base | LM1Base
+)
+PeWriteOperand: TypeAlias = MaskablePeWriteOperand | Nowrite | WriteMaskedOperand
 MvOperand: TypeAlias = PDM | DRAM | L2BM
 MatrixOperand: TypeAlias = Matrix | MatrixVector

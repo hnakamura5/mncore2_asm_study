@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "test:lsp completion debug verbose",
+      "type": "shell",
+      "command": "uv run -m script.test.lsp e2e/test_completion.py --debug-verbose &> ./private/test.log",
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

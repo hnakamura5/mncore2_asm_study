@@ -1,0 +1,2 @@
+fvpassa $lln0v $omr1; isub $lr0 $llm0v $lln0v
+d get $omr1 4  # debug: emulator-only memory dump

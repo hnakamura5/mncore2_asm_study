@@ -19,6 +19,7 @@ from .operands import (
     ForwardingKind,
     L1BM,
     L2BM,
+    MauReadOperand,
     MAUHalfSelect,
     Matrix,
     MatrixVector,
@@ -172,19 +173,34 @@ class InstructionBuilder:
         """
         if not operands:
             raise ValueError("At least one destination operand is required")
-        if any(isinstance(operand, Nowrite) for operand in operands) and len(operands) != 1:
+        if (
+            any(isinstance(operand, Nowrite) for operand in operands)
+            and len(operands) != 1
+        ):
             raise ValueError("nowrite must be the only destination operand")
         return " ".join(self._render_operand(operand) for operand in operands)
 
-    def _validate_alu_source_operand(self, operand: object, *, position: int, opcode: str) -> None:
+    def _validate_alu_source_operand(
+        self, operand: object, *, position: int, opcode: str
+    ) -> None:
         if position != 0 and isinstance(operand, FixedInput):
-            raise ValueError(f"{opcode} allows fixed inputs only in the first ALU source")
-        if position != 0 and isinstance(operand, Forwarding) and operand.kind == ForwardingKind.MREAD:
+            raise ValueError(
+                f"{opcode} allows fixed inputs only in the first ALU source"
+            )
+        if (
+            position != 0
+            and isinstance(operand, Forwarding)
+            and operand.kind == ForwardingKind.MREAD
+        ):
             raise ValueError(f"{opcode} allows mreadf only in the first ALU source")
 
-    def _emit_alu_unary(self, opcode: str, src_operand: object, dst_operands: Sequence[object]) -> Self:
+    def _emit_alu_unary(
+        self, opcode: str, src_operand: object, dst_operands: Sequence[object]
+    ) -> Self:
         self._validate_alu_source_operand(src_operand, position=0, opcode=opcode)
-        return self._emit_pe(f"{opcode} {self._render_operand(src_operand)} {self._render_operands(dst_operands)}")
+        return self._emit_pe(
+            f"{opcode} {self._render_operand(src_operand)} {self._render_operands(dst_operands)}"
+        )
 
     def _emit_alu_binary(
         self,
@@ -199,11 +215,15 @@ class InstructionBuilder:
             f"{opcode} {self._render_operand(src_x_operand)} {self._render_operand(src_y_operand)} {self._render_operands(dst_operands)}"
         )
 
-    def _validate_half_matrix(self, matrix: Matrix, *, opcode: str, require_double_long: bool) -> None:
+    def _validate_half_matrix(
+        self, matrix: Matrix, *, opcode: str, require_double_long: bool
+    ) -> None:
         if require_double_long and matrix.width != WordWidth.DOUBLE_LONG:
             raise ValueError(f"{opcode} requires a double-long matrix operand")
         if matrix.width == WordWidth.DOUBLE_LONG and matrix.addr % 2 != 0:
-            raise ValueError(f"{opcode} requires an even matrix addr for double-long access")
+            raise ValueError(
+                f"{opcode} requires an even matrix addr for double-long access"
+            )
 
     def _emit_pe(self, text: str) -> Self:
         """
@@ -223,7 +243,9 @@ class InstructionBuilder:
         """
         # MV / debug / pseudo は cycle 内に混ぜると構文上の意味が崩れるため拒否する。
         if self._active_cycle is not None:
-            raise RuntimeError("MV/debug/control instructions cannot be emitted inside cycle()")
+            raise RuntimeError(
+                "MV/debug/control instructions cannot be emitted inside cycle()"
+            )
         self._lines.append(statement)
         return self
 
@@ -266,7 +288,9 @@ class InstructionBuilder:
         """
         suffix = self._mv_suffix(size=size, tag=tag, nd=nd, priority=priority)
         return self._emit_non_pe(
-            InstructionStatement(text=f"{opcode}{suffix} {src_operand.render()} {dst_operand.render()}")
+            InstructionStatement(
+                text=f"{opcode}{suffix} {src_operand.render()} {dst_operand.render()}"
+            )
         )
 
     def quit(self) -> Self:
@@ -323,8 +347,12 @@ class InstructionBuilder:
         補足:
             manual では debug 文は「十分待ってから読んだのと同等の結果」を返すと説明される。実機同期そのものを再現する命令ではない。
         """
-        dtype_suffix = dtype.value if isinstance(dtype, DebugDataType) else (dtype or "")
-        memory = target_memory if isinstance(target_memory, str) else target_memory.render()
+        dtype_suffix = (
+            dtype.value if isinstance(dtype, DebugDataType) else (dtype or "")
+        )
+        memory = (
+            target_memory if isinstance(target_memory, str) else target_memory.render()
+        )
         return self._emit_non_pe(
             DebugStatement(
                 text=f"d get{dtype_suffix} {memory} {num_words}",
@@ -363,7 +391,9 @@ class InstructionBuilder:
         補足:
             payload は 64bit 長語単位で並べる。単語や半語の値を書きたい場合も、manual の表記どおり残りビットを埋めた長語表現を与える。
         """
-        memory = target_memory if isinstance(target_memory, str) else target_memory.render()
+        memory = (
+            target_memory if isinstance(target_memory, str) else target_memory.render()
+        )
         return self._emit_non_pe(
             DebugStatement(
                 text=f"d set {memory} {num_words} {payload}",
@@ -477,8 +507,7 @@ class InstructionBuilder:
         tag: int | None = None,
         nd: int | None = None,
         priority: int | None = None,
-    ) -> Self:
-        ...
+    ) -> Self: ...
 
     @overload
     def mvp(
@@ -490,8 +519,7 @@ class InstructionBuilder:
         tag: int | None = None,
         nd: int | None = None,
         priority: int | None = None,
-    ) -> Self:
-        ...
+    ) -> Self: ...
 
     @overload
     def mvp(
@@ -503,8 +531,7 @@ class InstructionBuilder:
         tag: int | None = None,
         nd: int | None = None,
         priority: int | None = None,
-    ) -> Self:
-        ...
+    ) -> Self: ...
 
     def mvp(
         self,
@@ -560,8 +587,7 @@ class InstructionBuilder:
         dst_operand: L2BM,
         tag: int | None = None,
         priority: int | None = None,
-    ) -> Self:
-        ...
+    ) -> Self: ...
 
     @overload
     def mvb(
@@ -572,8 +598,7 @@ class InstructionBuilder:
         dst_operand: L2BM,
         tag: int | None = None,
         priority: int | None = None,
-    ) -> Self:
-        ...
+    ) -> Self: ...
 
     def mvb(
         self,
@@ -706,8 +731,7 @@ class InstructionBuilder:
         tag: int | None = None,
         nd: int | None = None,
         priority: int | None = None,
-    ) -> Self:
-        ...
+    ) -> Self: ...
 
     @overload
     def mvr(
@@ -720,8 +744,7 @@ class InstructionBuilder:
         tag: int | None = None,
         nd: int | None = None,
         priority: int | None = None,
-    ) -> Self:
-        ...
+    ) -> Self: ...
 
     def mvr(
         self,
@@ -858,8 +881,7 @@ class InstructionBuilder:
         tag: int | None = None,
         nd: int | None = None,
         priority: int | None = None,
-    ) -> Self:
-        ...
+    ) -> Self: ...
 
     @overload
     def mvd(
@@ -871,8 +893,7 @@ class InstructionBuilder:
         tag: int | None = None,
         nd: int | None = None,
         priority: int | None = None,
-    ) -> Self:
-        ...
+    ) -> Self: ...
 
     def mvd(
         self,
@@ -982,7 +1003,9 @@ class InstructionBuilder:
             raise ValueError("wait tag 0 is invalid")
         return self._emit_pe(f"wait {tag}")
 
-    def l2bmb(self, *, src_l2bm: L2BM, dst_l1bm: L1BM, l1bset: str | None = None) -> Self:
+    def l2bmb(
+        self, *, src_l2bm: L2BM, dst_l1bm: L1BM, l1bset: str | None = None
+    ) -> Self:
         """
         対応: MNCore2.md 7.3 `l2bmb`
 
@@ -1007,7 +1030,9 @@ class InstructionBuilder:
 
     # --- 7.3 L2BM 命令 ---
 
-    def l2bmb2(self, *, src_l2bm: L2BM, dst_l1bm: L1BM, l1bset: str | None = None) -> Self:
+    def l2bmb2(
+        self, *, src_l2bm: L2BM, dst_l1bm: L1BM, l1bset: str | None = None
+    ) -> Self:
         """
         対応: MNCore2.md 7.3 `l2bmb2`
 
@@ -1031,12 +1056,12 @@ class InstructionBuilder:
         return self._emit_pe(f"{opcode} {src_l2bm.render()} {dst_l1bm.render()}")
 
     @overload
-    def l2bmd(self, *, src_l2bm: L2BM, dst_l1bm: L1BM, l1bset: str | None = None) -> Self:
-        ...
+    def l2bmd(
+        self, *, src_l2bm: L2BM, dst_l1bm: L1BM, l1bset: str | None = None
+    ) -> Self: ...
 
     @overload
-    def l2bmd(self, *, src_l1bm: L1BM, dst_l2bm: L2BM) -> Self:
-        ...
+    def l2bmd(self, *, src_l1bm: L1BM, dst_l2bm: L2BM) -> Self: ...
 
     def l2bmd(
         self,
@@ -1069,10 +1094,20 @@ class InstructionBuilder:
             入力例 2: `l2bmd $lb0 $lc0`
             結果例 2: 複数 L1BM からのデータを結合し、L2BM `$lc0` へまとめて書き戻す。
         """
-        if src_l2bm is not None and dst_l1bm is not None and src_l1bm is None and dst_l2bm is None:
+        if (
+            src_l2bm is not None
+            and dst_l1bm is not None
+            and src_l1bm is None
+            and dst_l2bm is None
+        ):
             opcode = "l2bmd" + (f"@{l1bset}" if l1bset else "")
             return self._emit_pe(f"{opcode} {src_l2bm.render()} {dst_l1bm.render()}")
-        if src_l1bm is not None and dst_l2bm is not None and src_l2bm is None and dst_l1bm is None:
+        if (
+            src_l1bm is not None
+            and dst_l2bm is not None
+            and src_l2bm is None
+            and dst_l1bm is None
+        ):
             return self._emit_pe(f"l2bmd {src_l1bm.render()} {dst_l2bm.render()}")
         raise TypeError("l2bmd expects either src_l2bm/dst_l1bm or src_l1bm/dst_l2bm")
 
@@ -1148,7 +1183,9 @@ class InstructionBuilder:
             入力例: `l2bmr2ffadd $lb0 $lc1`
             結果例: 2 系統の L1BM データを対にして縮約し、L2BM 1 箇所へ畳み込む。
         """
-        return self._emit_pe(f"l2bmr2{rrn_opcode} {src_l1bm.render()} {dst_l2bm.render()}")
+        return self._emit_pe(
+            f"l2bmr2{rrn_opcode} {src_l1bm.render()} {dst_l2bm.render()}"
+        )
 
     def l2bmi(self, *, l1bset: str, src_l1bm: L1BM, dst_l1bm: L1BM) -> Self:
         """
@@ -1237,7 +1274,9 @@ class InstructionBuilder:
             入力例: `l1bmp $lb0 $lm0 $ln0`
             結果例: L1BM `$lb0` の同一データを全 PE へ放送し、各 PE はそれぞれ LM0 / LM1 側に受け取る。
         """
-        return self._emit_pe(f"l1bmp {src_l1bm.render()} {self._render_operands(dst_operands)}")
+        return self._emit_pe(
+            f"l1bmp {src_l1bm.render()} {self._render_operands(dst_operands)}"
+        )
 
     # --- 7.4 L1BM 命令 ---
 
@@ -1262,9 +1301,13 @@ class InstructionBuilder:
             入力例: `l1bmm $lb0 $lr0`
             結果例: 16x1 MAB モードで L1BM の内容を各 PE へ広げる。1 本の L1BM を縦方向の PE 配列へ見せたいときに使う。
         """
-        return self._emit_pe(f"l1bmm {src_l1bm.render()} {self._render_operands(dst_operands)}")
+        return self._emit_pe(
+            f"l1bmm {src_l1bm.render()} {self._render_operands(dst_operands)}"
+        )
 
-    def l1bmm_at(self, *, mabadr: int, src_operand: PeReadOperand, dst_l1bm: L1BM) -> Self:
+    def l1bmm_at(
+        self, *, mabadr: int, src_operand: PeReadOperand, dst_l1bm: L1BM
+    ) -> Self:
         """
         対応: MNCore2.md 7.4 `l1bmm@<mabadr>`
 
@@ -1285,7 +1328,9 @@ class InstructionBuilder:
             入力例: `l1bmm@3 $lr0 $lb0`
             結果例: PE 側 `$lr0` の値を、MAB アドレス 3 を使う個別転送として L1BM `$lb0` に書き込む。
         """
-        return self._emit_pe(f"l1bmm@{mabadr} {src_operand.render()} {dst_l1bm.render()}")
+        return self._emit_pe(
+            f"l1bmm@{mabadr} {src_operand.render()} {dst_l1bm.render()}"
+        )
 
     def l1bmr(
         self,
@@ -1314,7 +1359,9 @@ class InstructionBuilder:
             入力例: `l1bmrffadd $lr0 $lb0`
             結果例: 16x1 MAB 内の PE 値を `ffadd` で縮約し、L1BM `$lb0` に 1 本の集約結果として残す。
         """
-        return self._emit_pe(f"l1bmr{rrn_opcode} {src_operand.render()} {dst_l1bm.render()}")
+        return self._emit_pe(
+            f"l1bmr{rrn_opcode} {src_operand.render()} {dst_l1bm.render()}"
+        )
 
     def l1bmm4(self, *, src_l1bm: L1BM, dst_operands: Sequence[PeWriteOperand]) -> Self:
         """
@@ -1337,9 +1384,13 @@ class InstructionBuilder:
             入力例: `l1bmm4 $lb0 $lr0`
             結果例: 4x4 MAB モードで L1BM から PE へ放送する。4x4 タイル単位の並びを保ったまま展開したいときに使う。
         """
-        return self._emit_pe(f"l1bmm4 {src_l1bm.render()} {self._render_operands(dst_operands)}")
+        return self._emit_pe(
+            f"l1bmm4 {src_l1bm.render()} {self._render_operands(dst_operands)}"
+        )
 
-    def l1bmm4_at(self, *, mabadr: int, src_operand: PeReadOperand, dst_l1bm: L1BM) -> Self:
+    def l1bmm4_at(
+        self, *, mabadr: int, src_operand: PeReadOperand, dst_l1bm: L1BM
+    ) -> Self:
         """
         対応: MNCore2.md 7.4 `l1bmm4@<mabadr>`
 
@@ -1360,7 +1411,9 @@ class InstructionBuilder:
             入力例: `l1bmm4@2 $lr0 $lb0`
             結果例: 4x4 タイル中の指定 MAB アドレスへ対応する PE 値だけを抜き出し、L1BM へ書く。
         """
-        return self._emit_pe(f"l1bmm4@{mabadr} {src_operand.render()} {dst_l1bm.render()}")
+        return self._emit_pe(
+            f"l1bmm4@{mabadr} {src_operand.render()} {dst_l1bm.render()}"
+        )
 
     def l1bmr4(
         self,
@@ -1389,15 +1442,17 @@ class InstructionBuilder:
             入力例: `l1bmr4ffadd $lr0 $lb0`
             結果例: 4x4 MAB 単位の PE 値を縮約し、L1BM `$lb0` にまとめる。4x4 放送の逆方向に相当する。
         """
-        return self._emit_pe(f"l1bmr4{rrn_opcode} {src_operand.render()} {dst_l1bm.render()}")
+        return self._emit_pe(
+            f"l1bmr4{rrn_opcode} {src_operand.render()} {dst_l1bm.render()}"
+        )
 
     @overload
-    def l1bmd(self, *, src_l1bm: L1BM, dst_operands: Sequence[PeWriteOperand]) -> Self:
-        ...
+    def l1bmd(
+        self, *, src_l1bm: L1BM, dst_operands: Sequence[PeWriteOperand]
+    ) -> Self: ...
 
     @overload
-    def l1bmd(self, *, src_operand: PeReadOperand, dst_l1bm: L1BM) -> Self:
-        ...
+    def l1bmd(self, *, src_operand: PeReadOperand, dst_l1bm: L1BM) -> Self: ...
 
     def l1bmd(
         self,
@@ -1433,19 +1488,33 @@ class InstructionBuilder:
         補足:
             tutorial では LM0 から LM1 へコピーした値が 2 step 後に観測できる例があり、実機上の待機サイクルを意識して使う必要がある。
         """
-        if src_l1bm is not None and dst_operands is not None and src_operand is None and dst_l1bm is None:
-            return self._emit_pe(f"l1bmd {src_l1bm.render()} {self._render_operands(dst_operands)}")
-        if src_operand is not None and dst_l1bm is not None and src_l1bm is None and dst_operands is None:
+        if (
+            src_l1bm is not None
+            and dst_operands is not None
+            and src_operand is None
+            and dst_l1bm is None
+        ):
+            return self._emit_pe(
+                f"l1bmd {src_l1bm.render()} {self._render_operands(dst_operands)}"
+            )
+        if (
+            src_operand is not None
+            and dst_l1bm is not None
+            and src_l1bm is None
+            and dst_operands is None
+        ):
             return self._emit_pe(f"l1bmd {src_operand.render()} {dst_l1bm.render()}")
-        raise TypeError("l1bmd expects either src_l1bm/dst_operands or src_operand/dst_l1bm")
+        raise TypeError(
+            "l1bmd expects either src_l1bm/dst_operands or src_operand/dst_l1bm"
+        )
 
     def dmfma(
         self,
         *,
         half_select: MAUHalfSelect,
         src_matrix: MatrixVector,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1482,7 +1551,7 @@ class InstructionBuilder:
         *,
         half_select: MAUHalfSelect,
         src_matrix: MatrixVector,
-        src_x_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1513,8 +1582,8 @@ class InstructionBuilder:
         self,
         *,
         src_matrix: MatrixVector,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1545,7 +1614,7 @@ class InstructionBuilder:
         self,
         *,
         src_matrix: MatrixVector,
-        src_x_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1576,8 +1645,8 @@ class InstructionBuilder:
         self,
         *,
         src_matrix: MatrixVector,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1608,7 +1677,7 @@ class InstructionBuilder:
         self,
         *,
         src_matrix: MatrixVector,
-        src_x_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1639,8 +1708,8 @@ class InstructionBuilder:
         self,
         *,
         src_matrix: MatrixVector,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1671,7 +1740,7 @@ class InstructionBuilder:
         self,
         *,
         src_matrix: MatrixVector,
-        src_x_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1702,9 +1771,9 @@ class InstructionBuilder:
         self,
         *,
         half_select: MAUHalfSelect,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
-        src_z_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
+        src_z_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1735,8 +1804,8 @@ class InstructionBuilder:
         self,
         *,
         half_select: MAUHalfSelect,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1766,8 +1835,8 @@ class InstructionBuilder:
     def dvadd(
         self,
         *,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1794,7 +1863,9 @@ class InstructionBuilder:
             f"dvadd {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
         )
 
-    def dvpassa(self, *, src_x_operand: PeReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def dvpassa(
+        self, *, src_x_operand: MauReadOperand, dst_operands: Sequence[PeWriteOperand]
+    ) -> Self:
         """
         対応: MNCore2.md 7.5 `dvpassa`
 
@@ -1815,14 +1886,16 @@ class InstructionBuilder:
             入力例: x=(1.0, 5.0)
             結果例: dst には `(1.0, 5.0)` がそのまま出る。ベクトル経路の copy / 配線固定として使える。
         """
-        return self._emit_pe(f"dvpassa {src_x_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_pe(
+            f"dvpassa {src_x_operand.render()} {self._render_operands(dst_operands)}"
+        )
 
     def fvfma(
         self,
         *,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
-        src_z_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
+        src_z_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1852,8 +1925,8 @@ class InstructionBuilder:
     def fvmul(
         self,
         *,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1883,8 +1956,8 @@ class InstructionBuilder:
     def fvadd(
         self,
         *,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1911,7 +1984,9 @@ class InstructionBuilder:
             f"fvadd {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
         )
 
-    def fvpassa(self, *, src_x_operand: PeReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def fvpassa(
+        self, *, src_x_operand: MauReadOperand, dst_operands: Sequence[PeWriteOperand]
+    ) -> Self:
         """
         対応: MNCore2.md 7.5 `fvpassa`
 
@@ -1932,14 +2007,16 @@ class InstructionBuilder:
             入力例: x=(1.0, 5.0)
             結果例: dst には `(1.0, 5.0)` がそのまま現れる。
         """
-        return self._emit_pe(f"fvpassa {src_x_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_pe(
+            f"fvpassa {src_x_operand.render()} {self._render_operands(dst_operands)}"
+        )
 
     def hvfma(
         self,
         *,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
-        src_z_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
+        src_z_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -1969,8 +2046,8 @@ class InstructionBuilder:
     def hvmul(
         self,
         *,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -2000,8 +2077,8 @@ class InstructionBuilder:
     def hvadd(
         self,
         *,
-        src_x_operand: PeReadOperand,
-        src_y_operand: PeReadOperand,
+        src_x_operand: MauReadOperand,
+        src_y_operand: MauReadOperand,
         dst_operands: Sequence[PeWriteOperand],
     ) -> Self:
         """
@@ -2028,7 +2105,9 @@ class InstructionBuilder:
             f"hvadd {src_x_operand.render()} {src_y_operand.render()} {self._render_operands(dst_operands)}"
         )
 
-    def hvpassa(self, *, src_x_operand: PeReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def hvpassa(
+        self, *, src_x_operand: MauReadOperand, dst_operands: Sequence[PeWriteOperand]
+    ) -> Self:
         """
         対応: MNCore2.md 7.5 `hvpassa`
 
@@ -2049,7 +2128,9 @@ class InstructionBuilder:
             入力例: x=(1,2,3,4)
             結果例: dst には `(1,2,3,4)` がそのまま出る。
         """
-        return self._emit_pe(f"hvpassa {src_x_operand.render()} {self._render_operands(dst_operands)}")
+        return self._emit_pe(
+            f"hvpassa {src_x_operand.render()} {self._render_operands(dst_operands)}"
+        )
 
     def dmwrite(self, *, src_operand: PeReadOperand, dst_matrix: Matrix) -> Self:
         """
@@ -2139,10 +2220,14 @@ class InstructionBuilder:
             入力例: `hmwrite $lr0 $lx0`
             結果例: half ベクトルを行列レジスタへ並べ、`hmfma` / `hmread` で参照できるようにする。
         """
-        self._validate_half_matrix(dst_matrix, opcode="hmwrite", require_double_long=False)
+        self._validate_half_matrix(
+            dst_matrix, opcode="hmwrite", require_double_long=False
+        )
         return self._emit_pe(f"hmwrite {src_operand.render()} {dst_matrix.render()}")
 
-    def dmread(self, *, src_matrix: Matrix, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def dmread(
+        self, *, src_matrix: Matrix, dst_operands: Sequence[PeWriteOperand]
+    ) -> Self:
         """
         対応: MNCore2.md 7.7 `dmread`
 
@@ -2162,11 +2247,15 @@ class InstructionBuilder:
             入力例: `dmread $lx0 $ln0`
             結果例: 行列レジスタ `$lx0` を転置読み出しし、列方向のデータが dst ベクトルへ出る。manual では整数ビット列のまま読む用途にも使えると説明される。
         """
-        return self._emit_pe(f"dmread {src_matrix.render()} {self._render_operands(dst_operands)}")
+        return self._emit_pe(
+            f"dmread {src_matrix.render()} {self._render_operands(dst_operands)}"
+        )
 
     # --- 7.7 行列レジスタ転置読み出し命令 ---
 
-    def fmread(self, *, src_matrix: Matrix, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def fmread(
+        self, *, src_matrix: Matrix, dst_operands: Sequence[PeWriteOperand]
+    ) -> Self:
         """
         対応: MNCore2.md 7.7 `fmread`
 
@@ -2186,9 +2275,13 @@ class InstructionBuilder:
             入力例: `fmread $lx0 $ln0`
             結果例: 単精度行列行を転置読み出しし、次のベクトル演算で使いやすい並びに戻す。
         """
-        return self._emit_pe(f"fmread {src_matrix.render()} {self._render_operands(dst_operands)}")
+        return self._emit_pe(
+            f"fmread {src_matrix.render()} {self._render_operands(dst_operands)}"
+        )
 
-    def gmread(self, *, src_matrix: Matrix, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def gmread(
+        self, *, src_matrix: Matrix, dst_operands: Sequence[PeWriteOperand]
+    ) -> Self:
         """
         対応: MNCore2.md 7.7 `gmread`
 
@@ -2208,9 +2301,13 @@ class InstructionBuilder:
             入力例: `gmread $lx0 $ln0`
             結果例: 疑似単精度行列を転置読み出しし、ベクトル経路へ戻す。
         """
-        return self._emit_pe(f"gmread {src_matrix.render()} {self._render_operands(dst_operands)}")
+        return self._emit_pe(
+            f"gmread {src_matrix.render()} {self._render_operands(dst_operands)}"
+        )
 
-    def hmread(self, *, src_matrix: Matrix, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def hmread(
+        self, *, src_matrix: Matrix, dst_operands: Sequence[PeWriteOperand]
+    ) -> Self:
         """
         対応: MNCore2.md 7.7 `hmread`
 
@@ -2230,8 +2327,12 @@ class InstructionBuilder:
             入力例: `hmread $lx0 $ln0`
             結果例: half 行列を転置読み出しし、4 half / 長語の形で dst へ戻す。
         """
-        self._validate_half_matrix(src_matrix, opcode="hmread", require_double_long=True)
-        return self._emit_pe(f"hmread {src_matrix.render()} {self._render_operands(dst_operands)}")
+        self._validate_half_matrix(
+            src_matrix, opcode="hmread", require_double_long=True
+        )
+        return self._emit_pe(
+            f"hmread {src_matrix.render()} {self._render_operands(dst_operands)}"
+        )
 
     def zero(self, *, dst_operands: Sequence[PeWriteOperand]) -> Self:
         """
@@ -2257,7 +2358,13 @@ class InstructionBuilder:
 
     # --- 7.8 ALU 命令 ---
 
-    def imm(self, *, payload: str | int, dst_operands: Sequence[PeWriteOperand], unsigned: bool = False) -> Self:
+    def imm(
+        self,
+        *,
+        payload: str | int,
+        dst_operands: Sequence[PeWriteOperand],
+        unsigned: bool = False,
+    ) -> Self:
         """
         対応: MNCore2.md 7.8 `imm`
 
@@ -2278,9 +2385,13 @@ class InstructionBuilder:
             結果例: payload `0x42` を内部規則に従って 2 長語へ展開し、dst に即値として供給する。`unsigned=True` なら `immu` になる。
         """
         opcode = "immu" if unsigned else "imm"
-        return self._emit_pe(f"{opcode} {payload} {self._render_operands(dst_operands)}")
+        return self._emit_pe(
+            f"{opcode} {payload} {self._render_operands(dst_operands)}"
+        )
 
-    def msl(self, *, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def msl(
+        self, *, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]
+    ) -> Self:
         """
         対応: MNCore2.md 7.8 `msl`
 
@@ -2302,7 +2413,9 @@ class InstructionBuilder:
         """
         return self._emit_alu_unary("msl", src_operand, dst_operands)
 
-    def msr(self, *, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def msr(
+        self, *, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]
+    ) -> Self:
         """
         対応: MNCore2.md 7.8 `msr`
 
@@ -2412,7 +2525,13 @@ class InstructionBuilder:
         opcode = f"{'u' if unsigned else ''}{precision}dec"
         return self._emit_alu_unary(opcode, src_operand, dst_operands)
 
-    def not_(self, *, precision: ALUIntPrecision, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def not_(
+        self,
+        *,
+        precision: ALUIntPrecision,
+        src_operand: AluReadOperand,
+        dst_operands: Sequence[PeWriteOperand],
+    ) -> Self:
         """
         対応: MNCore2.md 7.8 `not`
 
@@ -2434,7 +2553,13 @@ class InstructionBuilder:
         """
         return self._emit_alu_unary(f"{precision}not", src_operand, dst_operands)
 
-    def lnot(self, *, precision: ALUIntPrecision, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def lnot(
+        self,
+        *,
+        precision: ALUIntPrecision,
+        src_operand: AluReadOperand,
+        dst_operands: Sequence[PeWriteOperand],
+    ) -> Self:
         """
         対応: MNCore2.md 7.8 `lnot`
 
@@ -2456,7 +2581,13 @@ class InstructionBuilder:
         """
         return self._emit_alu_unary(f"{precision}lnot", src_operand, dst_operands)
 
-    def rsqrt(self, *, precision: ALUFloatPrecision, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def rsqrt(
+        self,
+        *,
+        precision: ALUFloatPrecision,
+        src_operand: AluReadOperand,
+        dst_operands: Sequence[PeWriteOperand],
+    ) -> Self:
         """
         対応: MNCore2.md 7.8 `rsqrt`
 
@@ -2478,7 +2609,13 @@ class InstructionBuilder:
         """
         return self._emit_alu_unary(f"{precision}rsqrt", src_operand, dst_operands)
 
-    def floor(self, *, precision: ALUFloatPrecision, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def floor(
+        self,
+        *,
+        precision: ALUFloatPrecision,
+        src_operand: AluReadOperand,
+        dst_operands: Sequence[PeWriteOperand],
+    ) -> Self:
         """
         対応: MNCore2.md 7.8 `floor`
 
@@ -2532,7 +2669,9 @@ class InstructionBuilder:
             opcode = f"u{opcode}"
         return self._emit_alu_unary(opcode, src_operand, dst_operands)
 
-    def bfe(self, *, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def bfe(
+        self, *, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]
+    ) -> Self:
         """
         対応: MNCore2.md 7.8 `bfe`
 
@@ -2554,7 +2693,13 @@ class InstructionBuilder:
         """
         return self._emit_alu_unary("hbfe", src_operand, dst_operands)
 
-    def bfn(self, *, precision: ALUBfnPrecision, src_operand: AluReadOperand, dst_operands: Sequence[PeWriteOperand]) -> Self:
+    def bfn(
+        self,
+        *,
+        precision: ALUBfnPrecision,
+        src_operand: AluReadOperand,
+        dst_operands: Sequence[PeWriteOperand],
+    ) -> Self:
         """
         対応: MNCore2.md 7.8 `bfn`
 
@@ -2665,7 +2810,9 @@ class InstructionBuilder:
             入力例: 4bit の概念例で `src_x=1010`, `src_y` の MSB=1 とする。
             結果例: `src_x` を左詰めしつつ `src_y` の MSB を取り込み、概念的には `0101` のような packed 値になる。
         """
-        return self._emit_alu_binary(f"{precision}packbit", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}packbit", src_x_operand, src_y_operand, dst_operands
+        )
 
     def and_(
         self,
@@ -2694,7 +2841,9 @@ class InstructionBuilder:
             入力例: `land $lr0 $ls0 $ln0`
             結果例: `0b1100 AND 0b1010 = 0b1000` が dst に出る。
         """
-        return self._emit_alu_binary(f"{precision}and", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}and", src_x_operand, src_y_operand, dst_operands
+        )
 
     def or_(
         self,
@@ -2723,7 +2872,9 @@ class InstructionBuilder:
             入力例: `lor $lr0 $ls0 $ln0`
             結果例: `0b1100 OR 0b1010 = 0b1110` が dst に出る。
         """
-        return self._emit_alu_binary(f"{precision}or", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}or", src_x_operand, src_y_operand, dst_operands
+        )
 
     def xor(
         self,
@@ -2752,7 +2903,9 @@ class InstructionBuilder:
             入力例: `lxor $lr0 $ls0 $ln0`
             結果例: `0b1100 XOR 0b1010 = 0b0110` が dst に出る。
         """
-        return self._emit_alu_binary(f"{precision}xor", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}xor", src_x_operand, src_y_operand, dst_operands
+        )
 
     def add(
         self,
@@ -2843,7 +2996,9 @@ class InstructionBuilder:
             入力例: `llsl $lr0 $ls0 $ln0`
             結果例: `src_x=3`, `src_y=2` なら dst には `3 << 2 = 12` が出る。
         """
-        return self._emit_alu_binary(f"{precision}lsl", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}lsl", src_x_operand, src_y_operand, dst_operands
+        )
 
     def lsr(
         self,
@@ -2903,7 +3058,9 @@ class InstructionBuilder:
             入力例: `lbsl $lr0 $ls0 $ln0`
             結果例: `src_x=0b1001`, `src_y=1` なら、ビットは循環左シフトされて `0b0011` 相当になる。
         """
-        return self._emit_alu_binary(f"{precision}bsl", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}bsl", src_x_operand, src_y_operand, dst_operands
+        )
 
     def bsr(
         self,
@@ -2932,7 +3089,9 @@ class InstructionBuilder:
             入力例: `lbsr $lr0 $ls0 $ln0`
             結果例: `src_x=0b1001`, `src_y=1` なら、ビットは循環右シフトされて `0b1100` 相当になる。
         """
-        return self._emit_alu_binary(f"{precision}bsr", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}bsr", src_x_operand, src_y_operand, dst_operands
+        )
 
     def relu(
         self,
@@ -2961,7 +3120,9 @@ class InstructionBuilder:
             入力例: `frelu $lr0 $ls0 $ln0`
             結果例: `src_x=-1.0`, `src_y=5.0` なら dst は `-0`、`src_x=+1.0` なら dst は 5.0 になる。`src_x` は条件、`src_y` が実データである。
         """
-        return self._emit_alu_binary(f"{precision}relu", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}relu", src_x_operand, src_y_operand, dst_operands
+        )
 
     def relu0(
         self,
@@ -2990,7 +3151,9 @@ class InstructionBuilder:
             入力例: `frelu0 $lr0 $ls0 $ln0`
             結果例: 振る舞いは `relu` と同じで、`src_x` が負なら `-0`、非負なら `src_y` が通る。
         """
-        return self._emit_alu_binary(f"{precision}relu0", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}relu0", src_x_operand, src_y_operand, dst_operands
+        )
 
     def relu1(
         self,
@@ -3019,7 +3182,9 @@ class InstructionBuilder:
             入力例: `frelu1 $lr0 $ls0 $ln0`
             結果例: `src_x` の第 2 MSB が 0 側なら `src_y` を通し、1 側なら `-0` にする。符号ビットではなく別条件ビットを使いたいときに選ぶ。
         """
-        return self._emit_alu_binary(f"{precision}relu1", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}relu1", src_x_operand, src_y_operand, dst_operands
+        )
 
     def relu2(
         self,
@@ -3048,7 +3213,9 @@ class InstructionBuilder:
             入力例: `frelu2 $lr0 $ls0 $ln0`
             結果例: `src_x` の第 3 MSB を条件として `src_y` を通すか `-0` にする。
         """
-        return self._emit_alu_binary(f"{precision}relu2", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}relu2", src_x_operand, src_y_operand, dst_operands
+        )
 
     def relu3(
         self,
@@ -3077,7 +3244,9 @@ class InstructionBuilder:
             入力例: `frelu3 $lr0 $ls0 $ln0`
             結果例: `src_x` の第 4 MSB を条件として `src_y` を通すか `-0` にする。
         """
-        return self._emit_alu_binary(f"{precision}relu3", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}relu3", src_x_operand, src_y_operand, dst_operands
+        )
 
     def lrelud(
         self,
@@ -3106,7 +3275,9 @@ class InstructionBuilder:
             入力例: `flrelud $lr0 $ls0 $ln0`
             結果例: `src_x=-1.0`, `src_y=8.0` なら dst は 4.0、`src_x=+1.0` なら 8.0 になる。
         """
-        return self._emit_alu_binary(f"{precision}lrelud", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}lrelud", src_x_operand, src_y_operand, dst_operands
+        )
 
     def lreluo(
         self,
@@ -3135,7 +3306,9 @@ class InstructionBuilder:
             入力例: `flreluo $lr0 $ls0 $ln0`
             結果例: `src_x=-1.0`, `src_y=8.0` なら dst は 1.0、`src_x=+1.0` なら 8.0 になる。
         """
-        return self._emit_alu_binary(f"{precision}lreluo", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}lreluo", src_x_operand, src_y_operand, dst_operands
+        )
 
     def ilrelud(
         self,
@@ -3167,4 +3340,6 @@ class InstructionBuilder:
         補足:
             manual でも「指数操作として理解する」とされており、`lrelud` と同一の数値規則ではない。
         """
-        return self._emit_alu_binary(f"{precision}ilrelud", src_x_operand, src_y_operand, dst_operands)
+        return self._emit_alu_binary(
+            f"{precision}ilrelud", src_x_operand, src_y_operand, dst_operands
+        )

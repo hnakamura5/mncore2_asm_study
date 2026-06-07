@@ -28,7 +28,9 @@
                 ],
                 "basedpyright.analysis.diagnosticMode": "workspace",
                 "basedpyright.disableLanguageServices": false,
-                "basedpyright.analysis.logLevel": "Trace"
+                "basedpyright.analysis.logLevel": "Trace",
+                "editor.formatOnSave": true,
+                "editor.formatOnSaveMode": "modifications",
             }
         }
     }

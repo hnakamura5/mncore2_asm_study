@@ -1011,6 +1011,10 @@ class InstructionBuilder:
 
         L2BM から L1BM への放送命令を追加する。
 
+        転送速度:
+        - L2BM 読み出し: 16 長語/サイクル
+        - 各 L1BM 書き込み: 16 長語/サイクル
+
         主な引数:
         - `src_l2bm`, `dst_l1bm`, `l1bset`
 
@@ -1037,6 +1041,10 @@ class InstructionBuilder:
         対応: MNCore2.md 7.3 `l2bmb2`
 
         L2BM から L1BM への分配放送命令を追加する。
+
+        転送速度:
+        - L2BM 読み出し: 64 長語/サイクル
+        - 各 L1BM 書き込み: 16 長語/サイクル
 
         主な引数:
         - `src_l2bm`, `dst_l1bm`, `l1bset`
@@ -1076,6 +1084,10 @@ class InstructionBuilder:
         対応: MNCore2.md 7.3 `l2bmd`
 
         L2BM -> L1BM の分配、または L1BM -> L2BM の結合を追加する。
+
+        転送速度:
+        - `L2BM -> L1BM` 分配: L2BM 読み出し 64 長語/サイクル、各 L1BM 書き込み 8 長語/サイクル
+        - `L1BM -> L2BM` 結合: 各 L1BM 読み出し 8 長語/サイクル、L2BM 書き込み 64 長語/サイクル
 
         主な引数:
         - `src_l2bm`/`dst_l1bm` または `src_l1bm`/`dst_l2bm`
@@ -1117,6 +1129,10 @@ class InstructionBuilder:
 
         指定 L1B から L2BM への個別転送を追加する。
 
+        転送速度:
+        - 指定 L1BM 読み出し: 16 長語/サイクル
+        - L2BM 書き込み: 16 長語/サイクル
+
         主な引数:
         - `l1badr`, `src_l1bm`, `dst_l2bm`
 
@@ -1146,6 +1162,10 @@ class InstructionBuilder:
 
         L1BM 群を縮約して L2BM に書く命令を追加する。
 
+        転送速度:
+        - 各 L1BM 読み出し: 16 長語/サイクル
+        - L2BM 書き込み: 16 長語/サイクル
+
         主な引数:
         - `rrn_opcode`, `src_l1bm`, `dst_l2bm`, `l1bset`
 
@@ -1168,6 +1188,10 @@ class InstructionBuilder:
         対応: MNCore2.md 7.3 `l2bmr2<rrn_opcode>`
 
         結合縮約つき L1BM -> L2BM 命令を追加する。
+
+        転送速度:
+        - 各 L1BM 読み出し: 16 長語/サイクル
+        - L2BM 書き込み: 64 長語/サイクル
 
         主な引数:
         - `rrn_opcode`, `src_l1bm`, `dst_l2bm`
@@ -1193,6 +1217,10 @@ class InstructionBuilder:
 
         L1BM 間マルチキャスト命令を追加する。
 
+        転送速度:
+        - 読み出し元 L1BM: 16 長語/サイクル
+        - 書き込み先 L1BM: 16 長語/サイクル
+
         主な引数:
         - `l1bset`, `src_l1bm`, `dst_l1bm`
 
@@ -1214,6 +1242,10 @@ class InstructionBuilder:
         対応: MNCore2.md 7.3 `l2bmdars`
 
         DAR 書き込み準備命令を追加する。
+
+        転送速度:
+        - L2BM 読み出し: 64 長語/サイクル
+        - DARBUF 書き込み: 128 アドレス語/サイクル
 
         主な引数:
         - `src_l2bm`, `dst_dar`
@@ -1237,6 +1269,10 @@ class InstructionBuilder:
 
         DARBUF から DAR へアドレスを書き込む命令を追加する。
 
+        転送速度:
+        - DARBUF 読み出し: 1 アドレス語/サイクル
+        - DAR 書き込み: 1 アドレス語/サイクル
+
         主な引数:
         - 引数なし
 
@@ -1258,6 +1294,10 @@ class InstructionBuilder:
         対応: MNCore2.md 7.4 `l1bmp`
 
         L1BM から全 64 PE への放送命令を追加する。
+
+        転送速度:
+        - 1 長語版: L1BM 側 1 長語/サイクル、PE 側 1 長語/サイクル
+        - 2 長語版: L1BM 側 2 長語/サイクル、PE 側 2 長語/サイクル
 
         主な引数:
         - `src_l1bm`, `dst_operands`
@@ -1286,6 +1326,10 @@ class InstructionBuilder:
 
         16x1 MAB モード放送命令を追加する。
 
+        転送速度:
+        - 1 長語版: L1BM 側 4 長語/サイクル、PE 側 1 長語/サイクル
+        - 2 長語版: L1BM 側 8 長語/サイクル、PE 側 2 長語/サイクル
+
         主な引数:
         - `src_l1bm`, `dst_operands`
         - `dst_operands` は複数の書き込み先を空白区切りで並べる。1 個以上必須。
@@ -1312,6 +1356,10 @@ class InstructionBuilder:
         対応: MNCore2.md 7.4 `l1bmm@<mabadr>`
 
         PE -> L1BM 個別転送命令を追加する。
+
+        転送速度:
+        - 1 長語版: L1BM 側 4 長語/サイクル、PE 側 1 長語/サイクル
+        - 2 長語版: L1BM 側 8 長語/サイクル、PE 側 2 長語/サイクル
 
         主な引数:
         - `mabadr`, `src_operand`, `dst_l1bm`
@@ -1344,6 +1392,10 @@ class InstructionBuilder:
 
         16x1 MAB モード縮約命令を追加する。
 
+        転送速度:
+        - 1 長語版: L1BM 側 4 長語/サイクル、PE 側 1 長語/サイクル
+        - 2 長語版: L1BM 側 8 長語/サイクル、PE 側 2 長語/サイクル
+
         主な引数:
         - `rrn_opcode`, `src_operand`, `dst_l1bm`
         - 書き込み方向では単一の L1BM を取る。
@@ -1368,6 +1420,10 @@ class InstructionBuilder:
         対応: MNCore2.md 7.4 `l1bmm4`
 
         4x4 MAB モード放送命令を追加する。
+
+        転送速度:
+        - 1 長語版: L1BM 側 16 長語/サイクル、PE 側 1 長語/サイクル
+        - 2 長語版: L1BM 側 32 長語/サイクル、PE 側 2 長語/サイクル
 
         主な引数:
         - `src_l1bm`, `dst_operands`
@@ -1395,6 +1451,10 @@ class InstructionBuilder:
         対応: MNCore2.md 7.4 `l1bmm4@<mabadr>`
 
         4x4 MAB モード個別転送命令を追加する。
+
+        転送速度:
+        - 1 長語版: L1BM 側 16 長語/サイクル、PE 側 1 長語/サイクル
+        - 2 長語版: L1BM 側 32 長語/サイクル、PE 側 2 長語/サイクル
 
         主な引数:
         - `mabadr`, `src_operand`, `dst_l1bm`
@@ -1426,6 +1486,10 @@ class InstructionBuilder:
         対応: MNCore2.md 7.4 `l1bmr4<rrn_opcode>`
 
         4x4 MAB モード縮約命令を追加する。
+
+        転送速度:
+        - 1 長語版: L1BM 側 16 長語/サイクル、PE 側 1 長語/サイクル
+        - 2 長語版: L1BM 側 32 長語/サイクル、PE 側 2 長語/サイクル
 
         主な引数:
         - `rrn_opcode`, `src_operand`, `dst_l1bm`
@@ -1466,6 +1530,10 @@ class InstructionBuilder:
         対応: MNCore2.md 7.4 `l1bmd`
 
         L1BM -> PE の分配、または PE -> L1BM の結合を追加する。
+
+        転送速度:
+        - `L1BM -> PE` 分配: L1BM 側 64 長語/サイクル、PE 側 1 長語/サイクル
+        - `PE -> L1BM` 結合: L1BM 側 64 長語/サイクル、PE 側 1 長語/サイクル
 
         主な引数:
         - `src_l1bm`/`dst_operands` または `src_operand`/`dst_l1bm`

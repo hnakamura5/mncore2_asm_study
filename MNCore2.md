@@ -219,11 +219,11 @@ LM0 の auto-stride アドレスは、概念上次式で決まる。
 
 ALU 第 1 入力に限り、固定値入力オペランドを使える。
 
-- `$l2bid`: `group * 2 + l2b`
-- `$l1bid`: L1B 番号
-- `$mabid`: MAB 番号
-- `$peid`: `mab * 4 + pe`
-- `$subpeid`: MAB 内 PE 番号
+- `$l2bid`: `group * 2 + l2b` (0 ~ 7)
+- `$l1bid`: L1B 番号 (0 ~ 7)
+- `$mabid`: MAB 番号 (0 ~ 16)
+- `$peid`: `mab * 4 + pe` (0 ~ 63)
+- `$subpeid`: MAB 内 PE 番号 (0 ~ 4)
 - `$msb1`: MSB のみ 1、残り 0
 
 ## 4. レジスタ / メモリセット
@@ -690,6 +690,23 @@ gmmul $lx $lm0v $ln0v /$imr1; gmwrite $ls0v $ly0 ; hrelu/$imr1 $t $t $t ; wait i
 - マスク: `l2bmb`, `l2bmb2`, `l2bmd`, `l2bm@<l1badr>`, `l2bmr<rrn_opcode>`, `l2bmr2<rrn_opcode>`, `l2bmi`, `l2bmdars`, `l2bmdarw` はいずれも PE メモリへの直接書き込みを行わないため、3.6.2 の書き込みマスク / ゼロフラッシュマスク適用対象外
 - 出力マスク: `l2bmb`, `l2bmb2`, `l2bmd`, `l2bm@<l1badr>`, `l2bmr<rrn_opcode>`, `l2bmr2<rrn_opcode>`, `l2bmi`, `l2bmdars`, `l2bmdarw` はいずれもマスクフラグを生成しない
 
+L2BM 命令の転送方向と形態をまとめると次のようになる。
+
+| 命令 | 転送方向 | 主な転送形態 | 代表速度 |
+| --- | --- | --- | --- |
+| `l2bmb` | `L2BM -> L1BM` | L1B 集合への放送 | L2BM 読み出し 16 長語/サイクル、各 L1BM 書き込み 16 長語/サイクル |
+| `l2bmb2` | `L2BM -> L1BM` | 2 L1B ずつ 4 グループに対する分配放送 | L2BM 読み出し 64 長語/サイクル、各 L1BM 書き込み 16 長語/サイクル |
+| `l2bmd` | `L2BM -> L1BM` | 全 L1B への分配 | L2BM 読み出し 64 長語/サイクル、各 L1BM 書き込み 8 長語/サイクル |
+| `l2bm@<l1badr>` | `L1BM -> L2BM` | 指定 1 L1B からの個別転送 | L1BM 読み出し 16 長語/サイクル、L2BM 書き込み 16 長語/サイクル |
+| `l2bmr<rrn_opcode>` | `L1BM -> L2BM` | L1B 方向縮約 | 各 L1BM 読み出し 16 長語/サイクル、L2BM 書き込み 16 長語/サイクル |
+| `l2bmr2<rrn_opcode>` | `L1BM -> L2BM` | 2 L1B ずつの結合縮約 | 各 L1BM 読み出し 16 長語/サイクル、L2BM 書き込み 64 長語/サイクル |
+| `l2bmd` | `L1BM -> L2BM` | 全 L1B からの結合 | 各 L1BM 読み出し 8 長語/サイクル、L2BM 書き込み 64 長語/サイクル |
+| `l2bmi` | `L1BM -> L1BM` | L2BM-L1BM パスを使う内部マルチキャスト | 読み出し元 L1BM 16 長語/サイクル、書き込み先 L1BM 16 長語/サイクル |
+| `l2bmdars` | `L2BM -> DARBUF` | DAR 書き込み準備 | L2BM 読み出し 64 長語/サイクル、DARBUF 書き込み 128 アドレス語/サイクル |
+| `l2bmdarw` | `DARBUF -> DAR` | DAR 書き込み | DARBUF 読み出し 1 アドレス語/サイクル、DAR 書き込み 1 アドレス語/サイクル |
+
+特に `l2bmd` は同じニーモニックで `L2BM -> L1BM` 分配と `L1BM -> L2BM` 結合の 2 方向を持つので、表でも別行として扱う方が混乱しにくい。
+
 #### `l2bmb`
 
 - 種別: L2BM
@@ -770,6 +787,29 @@ gmmul $lx $lm0v $ln0v /$imr1; gmwrite $ls0v $ly0 ; hrelu/$imr1 $t $t $t ; wait i
   - 同じ `L1BM -> PE` 方向の命令群には、オペコード側へゼロフラッシュマスクも付けられる
   - `l1bmm@<mabadr>`, `l1bmr<rrn_opcode>`, `l1bmm4@<mabadr>`, `l1bmr4<rrn_opcode>`, および `l1bmd` の `PE -> L1BM` 方向は PE メモリを書き込み先に持たないため、書き込みマスク / ゼロフラッシュマスク適用対象外
 - 出力マスク: `l1bmp`, `l1bmm`, `l1bmm@<mabadr>`, `l1bmr<rrn_opcode>`, `l1bmm4`, `l1bmm4@<mabadr>`, `l1bmr4<rrn_opcode>`, `l1bmd` はいずれもマスクフラグを生成しない
+
+manual 表 3.8 の L1BM 命令式一覧を、転送方向つきで整理すると次のようになる。
+
+| 名称 | 命令 | 転送方向 | L1BM 側速度 | PE 側速度 | サンプル |
+| --- | --- | --- | --- | --- | --- |
+| 1 長語 PE 放送 | `l1bmp` | `L1BM -> PE` | 1 長語/サイクル | 1 長語/サイクル | `l1bmp $lb0 $lr0v` |
+| 2 長語 PE 放送 | `l1bmp` | `L1BM -> PE` | 2 長語/サイクル | 2 長語/サイクル | `l1bmp $llb0 $llr0v` |
+| 1 長語 16x1MAB 放送 | `l1bmm` | `L1BM -> PE` | 4 長語/サイクル | 1 長語/サイクル | `l1bmm $lb0 $lr0v` |
+| 2 長語 16x1MAB 放送 | `l1bmm` | `L1BM -> PE` | 8 長語/サイクル | 2 長語/サイクル | `l1bmm $llb0 $llr0v` |
+| 1 長語 16x1 個別転送 | `l1bmm@<mabadr>` | `PE -> L1BM` | 4 長語/サイクル | 1 長語/サイクル | `l1bmm@0 $lr0v $lb0` |
+| 2 長語 16x1 個別転送 | `l1bmm@<mabadr>` | `PE -> L1BM` | 8 長語/サイクル | 2 長語/サイクル | `l1bmm@0 $llr0v $llb0` |
+| 1 長語 16x1 縮約 | `l1bmr<rrn_opcode>` | `PE -> L1BM` | 4 長語/サイクル | 1 長語/サイクル | `l1bmrdfadd $lr0v $lb0` |
+| 2 長語 16x1 縮約 | `l1bmr<rrn_opcode>` | `PE -> L1BM` | 8 長語/サイクル | 2 長語/サイクル | `l1bmrffadd $llr0v $llb0` |
+| 1 長語 4x4MAB 放送 | `l1bmm4` | `L1BM -> PE` | 16 長語/サイクル | 1 長語/サイクル | `l1bmm4 $lb0 $lr0v` |
+| 2 長語 4x4MAB 放送 | `l1bmm4` | `L1BM -> PE` | 32 長語/サイクル | 2 長語/サイクル | `l1bmm4 $llb0 $llr0v` |
+| 1 長語 4x4 個別転送 | `l1bmm4@<mabadr>` | `PE -> L1BM` | 16 長語/サイクル | 1 長語/サイクル | `l1bmm4@0 $lr0v $lb0` |
+| 2 長語 4x4 個別転送 | `l1bmm4@<mabadr>` | `PE -> L1BM` | 32 長語/サイクル | 2 長語/サイクル | `l1bmm4@0 $llr0v $llb0` |
+| 1 長語 4x4 縮約 | `l1bmr4<rrn_opcode>` | `PE -> L1BM` | 16 長語/サイクル | 1 長語/サイクル | `l1bmr4dfadd $lr0v $lb0` |
+| 2 長語 4x4 縮約 | `l1bmr4<rrn_opcode>` | `PE -> L1BM` | 32 長語/サイクル | 2 長語/サイクル | `l1bmr4ffadd $llr0v $llb0` |
+| 分配 | `l1bmd` | `L1BM -> PE` | 64 長語/サイクル | 1 長語/サイクル | `l1bmd $lb0 $lr0v` |
+| 結合 | `l1bmd` | `PE -> L1BM` | 64 長語/サイクル | 1 長語/サイクル | `l1bmd $lr0v $lb0` |
+
+この表でいう 16x1 モードは「MAB 方向に放送または縮約し、PE 方向に分配または結合する」レイアウト、4x4 モードは「MAB 番号上位 2 bit 側で分配または結合し、下位 2 bit 側で放送または縮約する」レイアウトに対応する。
 
 #### `l1bmp`
 

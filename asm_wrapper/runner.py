@@ -91,11 +91,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="noto",
         help="Device profile. The wrapper mirrors judge.py defaults.",
     )
-    parser.add_argument("--enable-get", action="store_true", help="Preserve 'd get*' in judge validation mode.")
-    parser.add_argument("--enable-set", action="store_true", help="Preserve 'd set' in judge validation mode.")
-    parser.add_argument("--seccomp-log", action="store_true", help="Enable the judge seccomp logger.")
-    parser.add_argument("--seccomp", action="store_true", help="Enable the judge seccomp sandbox.")
-    parser.add_argument("--dirty", action="store_true", help="Pass --dirty to the emulator.")
+    parser.add_argument(
+        "--enable-get",
+        action="store_true",
+        help="Preserve 'd get*' in judge validation mode.",
+    )
+    parser.add_argument(
+        "--enable-set",
+        action="store_true",
+        help="Preserve 'd set' in judge validation mode.",
+    )
+    parser.add_argument(
+        "--seccomp-log", action="store_true", help="Enable the judge seccomp logger."
+    )
+    parser.add_argument(
+        "--seccomp", action="store_true", help="Enable the judge seccomp sandbox."
+    )
+    parser.add_argument(
+        "--dirty", action="store_true", help="Pass --dirty to the emulator."
+    )
     parser.add_argument(
         "--out-dir",
         type=Path,
@@ -106,9 +120,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Keep the temporary artifact directory when --out-dir is not specified.",
     )
-    parser.add_argument("--print-vsm", action="store_true", help="Print rendered VSM to stderr before assembling.")
-    parser.add_argument("--print-asm", action="store_true", help="Print sanitized emulator input to stderr.")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Print toolchain commands and artifact paths.")
+    parser.add_argument(
+        "--print-vsm",
+        action="store_true",
+        help="Print rendered VSM to stderr before assembling.",
+    )
+    parser.add_argument(
+        "--print-asm",
+        action="store_true",
+        help="Print sanitized emulator input to stderr.",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print toolchain commands and artifact paths.",
+    )
     return parser.parse_args(argv)
 
 
@@ -124,7 +151,9 @@ def load_program(input_path: Path, args: argparse.Namespace) -> ProgramSource:
     source_format = detect_format(input_path, args.format)
     if source_format == "python":
         return load_python_program(input_path, args)
-    return ProgramSource(text=input_path.read_text(encoding="utf-8"), origin=str(input_path))
+    return ProgramSource(
+        text=input_path.read_text(encoding="utf-8"), origin=str(input_path)
+    )
 
 
 def load_python_program(input_path: Path, args: argparse.Namespace) -> ProgramSource:
@@ -133,14 +162,22 @@ def load_python_program(input_path: Path, args: argparse.Namespace) -> ProgramSo
     if hasattr(module, args.entry_function):
         entry = getattr(module, args.entry_function)
         if not callable(entry):
-            raise TypeError(f"{input_path}: {args.entry_function} exists but is not callable")
+            raise TypeError(
+                f"{input_path}: {args.entry_function} exists but is not callable"
+            )
         return coerce_program_source(entry(), f"{input_path}:{args.entry_function}()")
 
     if hasattr(module, args.builder_variable):
-        return coerce_program_source(getattr(module, args.builder_variable), f"{input_path}:{args.builder_variable}")
+        return coerce_program_source(
+            getattr(module, args.builder_variable),
+            f"{input_path}:{args.builder_variable}",
+        )
 
     if hasattr(module, args.source_variable):
-        return coerce_program_source(getattr(module, args.source_variable), f"{input_path}:{args.source_variable}")
+        return coerce_program_source(
+            getattr(module, args.source_variable),
+            f"{input_path}:{args.source_variable}",
+        )
 
     raise ValueError(
         f"{input_path}: expected {args.entry_function}(), {args.builder_variable}, or {args.source_variable}"
@@ -148,7 +185,9 @@ def load_python_program(input_path: Path, args: argparse.Namespace) -> ProgramSo
 
 
 def load_module(input_path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(f"_asm_wrapper_input_{input_path.stem}", input_path)
+    spec = importlib.util.spec_from_file_location(
+        f"_asm_wrapper_input_{input_path.stem}", input_path
+    )
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load Python source from {input_path}")
 
@@ -173,7 +212,9 @@ def coerce_program_source(value: Any, origin: str) -> ProgramSource:
         if isinstance(rendered, str):
             return ProgramSource(text=rendered, origin=origin)
 
-    raise TypeError(f"{origin} returned {type(value).__name__}, expected InstructionBuilder or str")
+    raise TypeError(
+        f"{origin} returned {type(value).__name__}, expected InstructionBuilder or str"
+    )
 
 
 def sanitize_asm(asm: str, device: str) -> str:
@@ -197,7 +238,9 @@ def ensure_executable(path: Path, name: str) -> Path:
     if not resolved.is_file():
         raise FileNotFoundError(f"{name} is not a file: {resolved}")
     if not os.access(resolved, os.X_OK):
-        raise PermissionError(f"{name} is not executable: {resolved}. Run 'chmod +x {resolved}'")
+        raise PermissionError(
+            f"{name} is not executable: {resolved}. Run 'chmod +x {resolved}'"
+        )
     return resolved
 
 
@@ -233,7 +276,9 @@ def write_artifacts(
         assemble_cmd += ["--instruction-mode", "flat"]
     assemble_cmd.append(str(vsm_path))
 
-    assemble_result = subprocess.run(assemble_cmd, capture_output=True, text=True, check=False)
+    assemble_result = subprocess.run(
+        assemble_cmd, capture_output=True, text=True, check=False
+    )
     if assemble_result.stderr:
         print(assemble_result.stderr, file=sys.stderr, end="")
     if assemble_result.returncode != 0:
@@ -249,7 +294,9 @@ def write_artifacts(
         emulate_cmd.append("--dirty")
     emulate_cmd += ["-i", str(asm_path), "-d", str(dump_path)]
 
-    emulate_result = subprocess.run(emulate_cmd, capture_output=True, text=True, check=False)
+    emulate_result = subprocess.run(
+        emulate_cmd, capture_output=True, text=True, check=False
+    )
     if emulate_result.stdout:
         print(emulate_result.stdout, file=sys.stderr, end="")
     if emulate_result.stderr:
@@ -304,7 +351,9 @@ def run_judge_validation(
     if args.verbose:
         judge_cmd.append("-v")
 
-    judge_result = subprocess.run(judge_cmd, capture_output=True, text=True, check=False)
+    judge_result = subprocess.run(
+        judge_cmd, capture_output=True, text=True, check=False
+    )
     if judge_result.stdout:
         print(judge_result.stdout, end="")
     if judge_result.stderr:
@@ -319,8 +368,14 @@ def run(argv: list[str] | None = None) -> int:
     input_path = Path(args.input).expanduser().resolve()
     assembler = ensure_executable(args.assembler, "assembler")
     emulator = ensure_executable(args.emulator, "emulator")
-    testcase_path = ensure_file(args.testcase, "testcase") if args.testcase is not None else None
-    judge_script = ensure_file(args.judge_script, "judge script") if testcase_path is not None else None
+    testcase_path = (
+        ensure_file(args.testcase, "testcase") if args.testcase is not None else None
+    )
+    judge_script = (
+        ensure_file(args.judge_script, "judge script")
+        if testcase_path is not None
+        else None
+    )
     program = load_program(input_path, args)
 
     if args.print_vsm:
@@ -377,11 +432,7 @@ def run(argv: list[str] | None = None) -> int:
 
 
 def main() -> None:
-    try:
-        raise SystemExit(run())
-    except Exception as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+    raise SystemExit(run())
 
 
 if __name__ == "__main__":

@@ -54,5 +54,24 @@ class WriteMaskOperandTests(unittest.TestCase):
         self.assertEqual(builder.lines(), ("l1bmd $lb0 $lr4v/$imr1",))
 
 
+class DebugOperandTests(unittest.TestCase):
+    def test_debug_methods_accept_normal_operands_directly(self) -> None:
+        builder = InstructionBuilder()
+        builder.debug_get(target_memory=GRF0.auto(2), num_words=1, dtype="d")
+        builder.debug_set(
+            target_memory=L1BM(addr=8),
+            num_words=2,
+            payload="00000000000000010000000000000002",
+        )
+
+        self.assertEqual(
+            builder.lines(),
+            (
+                "d getd $lr2 1  # debug: emulator-only memory dump",
+                "d set $lb8 2 00000000000000010000000000000002  # debug: emulator-only memory write",
+            ),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

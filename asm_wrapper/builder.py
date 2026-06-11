@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Generator, Sequence, Self, overload
 
-from .debug import DebugDataType, DebugMemoryOperand
+from .debug import DebugDataType
 from .operands import (
     AluReadOperand,
     ALUAnyPrecision,
@@ -28,6 +28,7 @@ from .operands import (
     PDM,
     PeReadOperand,
     PeWriteOperand,
+    Renderable,
     RRNOpcode,
     WordWidth,
 )
@@ -319,7 +320,7 @@ class InstructionBuilder:
     def debug_get(
         self,
         *,
-        target_memory: DebugMemoryOperand | str,
+        target_memory: Renderable | str,
         num_words: int,
         dtype: DebugDataType | str | None = None,
     ) -> Self:
@@ -329,7 +330,7 @@ class InstructionBuilder:
         エミュレータ実行時に対象メモリの内容をダンプする debug 文を追加する。
 
         主な引数:
-        - `target_memory`: `DebugLM0Ref` や `DebugMatrixRef` などの型付き target、または raw string。
+        - `target_memory`: `DebugLM0Ref` や `DebugMatrixRef` などの debug target、または `GRF0` / `L1BM` のような通常 operand、または raw string。
         - `num_words`: 読み出す長語数。
         - `dtype`: `d`, `f`, `h` などの表示型。不要なら省略できる。
 
@@ -363,7 +364,7 @@ class InstructionBuilder:
     def debug_set(
         self,
         *,
-        target_memory: DebugMemoryOperand | str,
+        target_memory: Renderable | str,
         num_words: int,
         payload: str,
     ) -> Self:
@@ -373,7 +374,7 @@ class InstructionBuilder:
         エミュレータ実行時に対象メモリへ値を書き込む debug 文を追加する。
 
         主な引数:
-        - `target_memory`: 型付き debug target、または raw string。
+        - `target_memory`: 型付き debug target、通常 operand、または raw string。
         - `num_words`: 書き込む長語数。
         - `payload`: debug 文法そのままの 16 進 payload 文字列。
 

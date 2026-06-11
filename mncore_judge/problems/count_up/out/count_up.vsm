@@ -1,7 +1,13 @@
-uldec $msb1 $lr2
-ipackbit $peid $aluf $lm0
+ipassa $peid $ls0
+l1bmd $aluf $lb512; uldec $msb1 $lr2
+fvpassa -$aluf $omr1; ipackbit $peid $aluf $lm0
 l1bmd $aluf $lb0
-d get $lb0 64  # debug: emulator-only memory dump
 nop/2  # pseudo: assembler repetition shorthand
-l1bmp $llb0 $lln4v
-d get $ln4 10  # debug: emulator-only memory dump
+imm i"13" $lr8; l1bmp $llb512 $lln0v
+l1bmp $llb520 $lln16v
+nop/2  # pseudo: assembler repetition shorthand
+ilsl $l1bid $ln14 $lm10
+ilsl $l1bid $ln24 $lm12; l1bmd $aluf $lb128
+l1bmd $aluf $lb256
+ilsl $ln[0,4,8,12] $lr[8,8,8,8] $lm14
+iinc $aluf $lm14v

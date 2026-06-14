@@ -1,0 +1,23 @@
+ipassa $peid $ls0
+l1bmd $aluf $lb128; uldec $msb1 $lr2
+ipassa $l1bid $lm4v
+ipassa $l2bid $lm8v
+ipassa $mabid $lm12v; l1bmp $llb128 $lls0v
+fvpassa -$aluf $omr1; ipackbit $subpeid $lr2 $nowrite; l1bmp $llb136 $lls16v
+nop
+iinc $aluf $ln0v
+nop/1  # pseudo: assembler repetition shorthand
+iadd $aluf $ls8 $ln2
+ilsl $lm4 $ls2 $lr16v
+ilsl $lm8 $ls14 $lr20v
+ilsl $lm12 $ls24 $lr24v
+iadd $ln0v $lr16v $ln0v
+iadd $aluf $lr20v $ln0v
+iadd $aluf $lr24v $ln0v
+l1bmd $aluf $lb0
+d get $lb0 64  # debug: emulator-only memory dump
+nop/2  # pseudo: assembler repetition shorthand
+l2bmd $lb0 $lc0
+l2bmd $lb32 $lc256
+d get $lc0 64  # debug: emulator-only memory dump
+d get $lc256 64  # debug: emulator-only memory dump

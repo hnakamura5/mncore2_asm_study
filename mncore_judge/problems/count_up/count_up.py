@@ -40,13 +40,12 @@ from asm_wrapper import (
 # 即値0x0000000000000001 ならできるけども？じゃあこっちでやって、最後に集めるときに1足すか。
 
 
-peid = LM0.auto(0)
+peid_0_1 = LM0.auto(0)  # 単語ペア (PEID << 2 + 0, PEID << 2 + 1) を入れる
 l1bid_addr = 2
 l1bid = LM0.auto(l1bid_addr)
 l2bid_addr = 4
 l2bid = LM0.auto(l2bid_addr)
-l1bid_shift7_addr = 10
-l1bid_shift7 = LM0.auto(l1bid_shift7_addr)
+l1bid_shift7 = GRF0.auto(16)
 l2bid_shift10_addr = 12
 l2bid_shift10 = LM0.auto(l2bid_shift10_addr)
 extra_2bit_addr = 14
@@ -67,16 +66,26 @@ imm_13 = GRF0.auto(8)
 peid_raw = GRF1.auto(0)
 peid_for_imm = GRF1.auto(2)  # 32bitで同じ数字が二回繰り返されている列
 
+pe_result_8s_addr = GRF1.auto(4)  # PEごとの結論を入れる
+# 単語ペア(1, 2) に、l1bid << 7 と l2bid << 10 を足したものをベースとして
+# これに [0, 0x200, 0x400, 0x600] を足した8単語が入る
+
 l1bm_peid = L1BM(
     addr=0,
 )
 l1bm_peid_ll = L1BM(addr=0, width=WordWidth.DOUBLE_LONG)
 l1bm_l1bid = L1BM(addr=128)
 l1bm_l2bid = L1BM(addr=256)
-l1bm_extra_2bit = L1BM(addr=384)
-l1bm_raw_peid = L1BM(addr=512)
-l1bm_raw_peid_ll = L1BM(addr=512, width=WordWidth.DOUBLE_LONG)
-l1bm_raw_peid_ll_2 = L1BM(addr=520, width=WordWidth.DOUBLE_LONG)
+l1bm_extra_2bit_addr = 384
+l1bm_extra_2bit = L1BM(addr=l1bm_extra_2bit_addr)
+l1bm_result_addr = 768
+l1bm_result = L1BM(addr=l1bm_result_addr)
+l1bm_raw_peid_addr = 1024
+l1bm_raw_peid = L1BM(addr=l1bm_raw_peid_addr)
+l1bm_raw_peid_ll = L1BM(addr=l1bm_raw_peid_addr, width=WordWidth.DOUBLE_LONG)
+l1bm_raw_peid_ll_2 = L1BM(addr=l1bm_raw_peid_addr + 8, width=WordWidth.DOUBLE_LONG)
+
+l2bm_result = L2BM(addr=0)
 
 
 def build() -> InstructionBuilder:
@@ -111,7 +120,7 @@ def build() -> InstructionBuilder:
             precision="i",
             src_x_operand=PEID,
             src_y_operand=ALUF,
-            dst_operands=[peid],
+            dst_operands=[peid_0_1],
         )  # PEID << 2 + 0 と PEID << 2 + 1 を作る。0と1は ALUFの単語MSBから来る。
     # これをL1BMに集めると、0, 1, 2, 3, ..., 127 ができる。7bit 確保
 
@@ -121,7 +130,7 @@ def build() -> InstructionBuilder:
 
     if False:
         ib.debug_get(
-            target_memory=peid, num_words=1
+            target_memory=peid_0_1, num_words=1
         )  # デバッグ用。0, 1, 2, 3, ..., 127 のどれかが入っていることを確認する
 
     with ib.cycle():
@@ -216,10 +225,115 @@ def build() -> InstructionBuilder:
             src_operand=ALUF,
             dst_operands=[LM0.auto(extra_2bit_addr, vector=True)],
         )
+        # 1, 1 << 13 + 1, 2 << 13 + 1, 3 << 13 + 1 を得る。つまり残りの2bit分と+1
 
     if False:
         ib.debug_get(target_memory=extra_2bit, num_words=4)
-        # 1, 1 << 13 + 1, 2 << 13 + 1, 3 << 13 + 1 が出る
+        # 1, 0x2001, 0x4001, 0x6001 が出る
+
+    with ib.cycle():
+        ib.l1bmd(src_operand=ALUF, dst_l1bm=l1bm_extra_2bit)  # extra_2bit をL1BMに結合
+
+    if False:
+        ib.debug_get(target_memory=l1bm_extra_2bit, num_words=2)
+        ib.debug_get(target_memory=l1bm_extra_2bit + 64, num_words=2)
+        ib.debug_get(target_memory=l1bm_extra_2bit + 128, num_words=2)
+        ib.debug_get(target_memory=l1bm_extra_2bit + 192, num_words=2)
+        # 1, 0x2001, 0x4001, 0x6001 が出る
+
+    with ib.cycle():
+        ib.nop()
+
+    with ib.cycle():
+        ib.add(
+            precision="i",
+            src_x_operand=peid_0_1,
+            src_y_operand=l1bid_shift7,
+            dst_operands=[pe_result_8s_addr.as_vector()],
+        )
+
+    if False:
+        ib.debug_get(target_memory=pe_result_8s_addr, num_words=4)
+
+    with ib.cycle():
+        ib.add(
+            precision="i",
+            src_x_operand=ALUF,
+            src_y_operand=l2bid_shift10,
+            dst_operands=[pe_result_8s_addr.as_vector()],
+        )
+
+    with ib.cycle():
+        ib.add(
+            precision="i",
+            src_x_operand=ALUF,
+            src_y_operand=extra_2bit.as_vector(),
+            dst_operands=[pe_result_8s_addr.as_vector()],
+        )
+
+    with ib.cycle():
+        ib.nop()
+
+    if False:
+        ib.debug_get(target_memory=pe_result_8s_addr, num_words=4)
+
+    with ib.cycle():
+        ib.l1bmd(src_operand=pe_result_8s_addr, dst_l1bm=l1bm_result)
+
+    with ib.cycle():
+        ib.l1bmd(src_operand=pe_result_8s_addr + 2, dst_l1bm=l1bm_result + 64)
+
+    with ib.cycle():
+        ib.l1bmd(src_operand=pe_result_8s_addr + 4, dst_l1bm=l1bm_result + 128)
+
+    with ib.cycle():
+        ib.l1bmd(src_operand=pe_result_8s_addr + 6, dst_l1bm=l1bm_result + 192)
+
+    if False:
+        ib.debug_get(target_memory=l1bm_result, num_words=64)
+        ib.debug_get(target_memory=l1bm_result + 64, num_words=64)
+        ib.debug_get(target_memory=l1bm_result + 128, num_words=64)
+        ib.debug_get(target_memory=l1bm_result + 192, num_words=64)
+
+    # 転送幅の問題で16単語ごとになる
+    # for i in range(4):
+    #     with ib.cycle():
+    #         ib.l2bmd(src_l1bm=l1bm_result + i * 32, dst_l2bm=l2bm_result + i * 256)
+
+    #     with ib.cycle():
+    #         ib.l2bmd(
+    #             src_l1bm=l1bm_result + (i + 1) * 32,
+    #             dst_l2bm=l2bm_result + (i + 1) * 256,
+    #         )
+
+    # if True:
+    #     ib.debug_get(target_memory=l2bm_result, num_words=64)
+    #     ib.debug_get(target_memory=l2bm_result + 256, num_words=64)
+    #     ib.debug_get(target_memory=l2bm_result + 512, num_words=64)
+    #     ib.debug_get(target_memory=l2bm_result + 768, num_words=64)
+
+    # L1BMごとにサイクルごと32単語固めて転送する。だから各L1BMでの区切りを32単語ごとにする必要がある。
+    # 127まで一気に作っているのが売りなのだが？
+    # これなら16単語単位にして、4bitで切って隙間にl1bm押し込んでも良いかもしれない。
+    for i in range(4):
+        with ib.cycle():
+            ib.l2bmr2(
+                rrn_opcode="fmin",  # 整数の大小比較であることが保証されている
+                src_l1bm=l1bm_result + i * 64,
+                dst_l2bm=l2bm_result + i * 512,
+            )
+        with ib.cycle():
+            ib.l2bmr2(
+                rrn_opcode="fmax",
+                src_l1bm=l1bm_result + i * 64,
+                dst_l2bm=l2bm_result + (i + 1) * 512,
+            )
+
+    if True:
+        ib.debug_get(target_memory=l2bm_result, num_words=64)
+        ib.debug_get(target_memory=l2bm_result + 512, num_words=64)
+        ib.debug_get(target_memory=l2bm_result + 1024, num_words=64)
+        ib.debug_get(target_memory=l2bm_result + 1536, num_words=64)
 
     return ib
 

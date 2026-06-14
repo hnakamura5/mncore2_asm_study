@@ -8,9 +8,10 @@ LM0/LM1・GRF0/GRF1・行列レジスタなどの空間を別 class に分けて
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Final, Literal, Protocol, Sequence, TypeAlias
+import re
+from typing import Final, Literal, Protocol, Self, Sequence, TypeAlias
 
 
 class Renderable(Protocol):
@@ -92,8 +93,90 @@ WriteMaskGuardSuffix: TypeAlias = Literal["t", "p"]
 class Operand:
     """通常命令で使うオペランドの基底型。"""
 
+    def __add__(self, delta: object) -> Self:
+        if not isinstance(delta, int):
+            return NotImplemented
+        return self._offset_by(delta)
+
+    def __radd__(self, delta: object) -> Self:
+        return self.__add__(delta)
+
+    def _offset_by(self, delta: int) -> Self:
+        raise TypeError(f"{type(self).__name__} does not support address arithmetic")
+
     def render(self) -> str:
         raise NotImplementedError
+
+
+_SUFFIX_WITH_MASK_RE = re.compile(r"^(?P<body>.*?)(?:/(?P<mask>[01]{4}))?$")
+_SUFFIX_ADDR_RE = re.compile(
+    r"^(?P<t_prefix>t?)(?P<base>\[[0-9,]+\]|[0-9]+)(?P<vector>v[0-9]*)?(?P<madpe>j[0-9]+)?$"
+)
+
+
+def _offset_flat_addr_text(flat_addr_text: str, delta: int) -> str:
+    inner = flat_addr_text[1:-1]
+    return "[" + ",".join(str(int(addr) + delta) for addr in inner.split(",")) + "]"
+
+
+def _offset_suffix_addresses(suffix: str, delta: int) -> str:
+    mask_match = _SUFFIX_WITH_MASK_RE.fullmatch(suffix)
+    if mask_match is None:
+        raise ValueError(
+            f"unsupported operand suffix for address arithmetic: {suffix!r}"
+        )
+
+    body = mask_match.group("body")
+    cycle_mask = mask_match.group("mask")
+    addr_match = _SUFFIX_ADDR_RE.fullmatch(body)
+    if addr_match is None:
+        raise ValueError(
+            f"unsupported operand suffix for address arithmetic: {suffix!r}"
+        )
+
+    base = addr_match.group("base")
+    if base.startswith("["):
+        offset_base = _offset_flat_addr_text(base, delta)
+    else:
+        offset_base = str(int(base) + delta)
+
+    offset_body = "".join(
+        part or ""
+        for part in (
+            addr_match.group("t_prefix"),
+            offset_base,
+            addr_match.group("vector"),
+            addr_match.group("madpe"),
+        )
+    )
+    return offset_body if cycle_mask is None else f"{offset_body}/{cycle_mask}"
+
+
+def _replace_suffix_vector(suffix: str, vector: bool) -> str:
+    mask_match = _SUFFIX_WITH_MASK_RE.fullmatch(suffix)
+    if mask_match is None:
+        raise ValueError(f"unsupported operand suffix for vector rewrite: {suffix!r}")
+
+    body = mask_match.group("body")
+    cycle_mask = mask_match.group("mask")
+    addr_match = _SUFFIX_ADDR_RE.fullmatch(body)
+    if addr_match is None:
+        raise ValueError(f"unsupported operand suffix for vector rewrite: {suffix!r}")
+
+    vector_suffix = addr_match.group("vector") if vector else ""
+    if vector and vector_suffix is None:
+        vector_suffix = "v"
+
+    rewritten_body = "".join(
+        part or ""
+        for part in (
+            addr_match.group("t_prefix"),
+            addr_match.group("base"),
+            vector_suffix,
+            addr_match.group("madpe"),
+        )
+    )
+    return rewritten_body if cycle_mask is None else f"{rewritten_body}/{cycle_mask}"
 
 
 def _format_flat_addrs(addresses: Sequence[int]) -> str:
@@ -163,6 +246,9 @@ class PDM(Operand):
     addr: int
     group: int | None = None
 
+    def _offset_by(self, delta: int) -> Self:
+        return replace(self, addr=self.addr + delta)
+
     def render(self) -> str:
         suffix = f"@{self.group}" if self.group is not None else ""
         return f"$p{self.addr}{suffix}"
@@ -179,6 +265,13 @@ class DRAM(Operand):
     addr: int | None = None
     dar_addr: int | None = None
     group: int | None = None
+
+    def _offset_by(self, delta: int) -> Self:
+        if self.addr is not None:
+            return replace(self, addr=self.addr + delta)
+        if self.dar_addr is not None:
+            return replace(self, dar_addr=self.dar_addr + delta)
+        raise ValueError("DRAM address arithmetic requires addr or dar_addr")
 
     def render(self) -> str:
         if (self.addr is None) == (self.dar_addr is None):
@@ -198,6 +291,9 @@ class DAR(Operand):
 
     addr: int
 
+    def _offset_by(self, delta: int) -> Self:
+        return replace(self, addr=self.addr + delta)
+
     def render(self) -> str:
         return f"$dar{self.addr}"
 
@@ -214,6 +310,9 @@ class L2BM(Operand):
     addr: int
     group: int | None = None
     l2b: int | None = None
+
+    def _offset_by(self, delta: int) -> Self:
+        return replace(self, addr=self.addr + delta)
 
     def render(self) -> str:
         if self.group is None and self.l2b is None:
@@ -237,6 +336,14 @@ class L1BM(Operand):
     width: WordWidth = WordWidth.LONG
     indirect: bool = False
 
+    def as_width(self, width: WordWidth) -> Self:
+        return replace(self, width=width)
+
+    def _offset_by(self, delta: int) -> Self:
+        if self.indirect or self.addr is None:
+            raise ValueError("L1BM address arithmetic requires a direct addr")
+        return replace(self, addr=self.addr + delta)
+
     def render(self) -> str:
         if self.indirect:
             return f"${self.width.value}bi"
@@ -256,6 +363,15 @@ class LM0(Operand):
 
     suffix: str
     width: WordWidth = WordWidth.LONG
+
+    def as_width(self, width: WordWidth) -> Self:
+        return replace(self, width=width)
+
+    def as_vector(self, vector: bool = True) -> Self:
+        return replace(self, suffix=_replace_suffix_vector(self.suffix, vector))
+
+    def _offset_by(self, delta: int) -> Self:
+        return replace(self, suffix=_offset_suffix_addresses(self.suffix, delta))
 
     @classmethod
     def auto(
@@ -365,6 +481,15 @@ class LM1(Operand):
     suffix: str
     width: WordWidth = WordWidth.LONG
 
+    def as_width(self, width: WordWidth) -> Self:
+        return replace(self, width=width)
+
+    def as_vector(self, vector: bool = True) -> Self:
+        return replace(self, suffix=_replace_suffix_vector(self.suffix, vector))
+
+    def _offset_by(self, delta: int) -> Self:
+        return replace(self, suffix=_offset_suffix_addresses(self.suffix, delta))
+
     @classmethod
     def auto(
         cls,
@@ -435,6 +560,15 @@ class GRF0(Operand):
     suffix: str
     width: WordWidth = WordWidth.LONG
 
+    def as_width(self, width: WordWidth) -> Self:
+        return replace(self, width=width)
+
+    def as_vector(self, vector: bool = True) -> Self:
+        return replace(self, suffix=_replace_suffix_vector(self.suffix, vector))
+
+    def _offset_by(self, delta: int) -> Self:
+        return replace(self, suffix=_offset_suffix_addresses(self.suffix, delta))
+
     @classmethod
     def auto(
         cls,
@@ -495,6 +629,15 @@ class GRF1(Operand):
     suffix: str
     width: WordWidth = WordWidth.LONG
 
+    def as_width(self, width: WordWidth) -> Self:
+        return replace(self, width=width)
+
+    def as_vector(self, vector: bool = True) -> Self:
+        return replace(self, suffix=_replace_suffix_vector(self.suffix, vector))
+
+    def _offset_by(self, delta: int) -> Self:
+        return replace(self, suffix=_offset_suffix_addresses(self.suffix, delta))
+
     @classmethod
     def auto(
         cls,
@@ -554,6 +697,9 @@ class TReg(Operand):
 
     width: WordWidth = WordWidth.LONG
 
+    def as_width(self, width: WordWidth) -> Self:
+        return replace(self, width=width)
+
     def render(self) -> str:
         return f"${self.width.value}t"
 
@@ -566,6 +712,9 @@ class MaskRegister(Operand):
     """
 
     addr: int
+
+    def _offset_by(self, delta: int) -> Self:
+        return replace(self, addr=self.addr + delta)
 
     def render(self) -> str:
         return f"$omr{self.addr}"
@@ -582,6 +731,12 @@ class Matrix(Operand):
     bank: MatrixBank
     addr: int
     width: WordWidth = WordWidth.LONG
+
+    def as_width(self, width: WordWidth) -> Self:
+        return replace(self, width=width)
+
+    def _offset_by(self, delta: int) -> Self:
+        return replace(self, addr=self.addr + delta)
 
     @classmethod
     def half(cls, bank: MatrixBank, addr: int, *, double_long: bool = False) -> Matrix:

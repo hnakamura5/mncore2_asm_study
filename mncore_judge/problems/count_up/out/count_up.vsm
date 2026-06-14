@@ -1,13 +1,35 @@
 ipassa $peid $ls0
-l1bmd $aluf $lb512; uldec $msb1 $lr2
+l1bmd $aluf $lb1024; uldec $msb1 $lr2
 fvpassa -$aluf $omr1; ipackbit $peid $aluf $lm0
 l1bmd $aluf $lb0
 nop/2  # pseudo: assembler repetition shorthand
-imm i"13" $lr8; l1bmp $llb512 $lln0v
-l1bmp $llb520 $lln16v
+imm i"13" $lr8; l1bmp $llb1024 $lln0v
+l1bmp $llb1032 $lln16v
 nop/2  # pseudo: assembler repetition shorthand
-ilsl $l1bid $ln14 $lm10
+ilsl $l1bid $ln14 $lr16
 ilsl $l1bid $ln24 $lm12; l1bmd $aluf $lb128
 l1bmd $aluf $lb256
 ilsl $ln[0,4,8,12] $lr[8,8,8,8] $lm14
 iinc $aluf $lm14v
+l1bmd $aluf $lb384
+nop
+iadd $lm0 $lr16 $ls4v
+iadd $aluf $lm12 $ls4v
+iadd $aluf $lm14v $ls4v
+nop
+l1bmd $ls4 $lb768
+l1bmd $ls6 $lb832
+l1bmd $ls8 $lb896
+l1bmd $ls10 $lb960
+l2bmr2fmin $lb768 $lc0
+l2bmr2fmax $lb768 $lc512
+l2bmr2fmin $lb832 $lc512
+l2bmr2fmax $lb832 $lc1024
+l2bmr2fmin $lb896 $lc1024
+l2bmr2fmax $lb896 $lc1536
+l2bmr2fmin $lb960 $lc1536
+l2bmr2fmax $lb960 $lc2048
+d get $lc0 64  # debug: emulator-only memory dump
+d get $lc512 64  # debug: emulator-only memory dump
+d get $lc1024 64  # debug: emulator-only memory dump
+d get $lc1536 64  # debug: emulator-only memory dump

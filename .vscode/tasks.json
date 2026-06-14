@@ -2,6 +2,19 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "run count_up testcase",
+      "type": "shell",
+      "command": "./run_testcase.sh count_up &> ./temp/count_up.log",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "test:lsp completion debug verbose",
       "type": "shell",
       "command": "uv run -m script.test.lsp e2e/test_completion.py --debug-verbose &> ./private/test.log",

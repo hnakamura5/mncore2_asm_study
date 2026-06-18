@@ -5,6 +5,7 @@ import unittest
 from asm_wrapper import (
     DRAM,
     GRF0,
+    GRF1,
     InstructionBuilder,
     L1BM,
     L2BM,
@@ -79,6 +80,53 @@ class DebugOperandTests(unittest.TestCase):
         )
 
 
+class BuilderMemoryAllocationTests(unittest.TestCase):
+    def test_new_memory_allocates_auto_address_operands_with_alignment(self) -> None:
+        builder = InstructionBuilder()
+
+        first = builder.new_memory(LM0, 2, 2)
+        second = builder.new_memory(LM0, 3, 8)
+
+        self.assertIsInstance(first, LM0)
+        self.assertEqual(first.render(), "$lm0")
+        self.assertEqual(second.render(), "$lm8")
+
+    def test_new_memory_tracks_each_memory_type_independently(self) -> None:
+        builder = InstructionBuilder()
+
+        l1bm_first = builder.new_memory(L1BM, 128, 128)
+        lm0_first = builder.new_memory(LM0, 4, 4)
+        l1bm_second = builder.new_memory(L1BM, 64, 128)
+
+        self.assertEqual(l1bm_first.render(), "$lb0")
+        self.assertEqual(lm0_first.render(), "$lm0")
+        self.assertEqual(l1bm_second.render(), "$lb128")
+
+    def test_new_memory_supports_direct_address_operands(self) -> None:
+        builder = InstructionBuilder()
+
+        first = builder.new_memory(DRAM, 64, 64)
+        second = builder.new_memory(DRAM, 32, 64)
+
+        self.assertIsInstance(first, DRAM)
+        self.assertEqual(first.render(), "$d0")
+        self.assertEqual(second.render(), "$d64")
+
+    def test_typed_new_memory_wrappers_return_matching_operand_types(self) -> None:
+        builder = InstructionBuilder()
+
+        lm0 = builder.new_lm0(8, 8)
+        l1bm = builder.new_l1bm(128, 128)
+        grf1 = builder.new_grf1(4, 4)
+
+        self.assertIsInstance(lm0, LM0)
+        self.assertIsInstance(l1bm, L1BM)
+        self.assertIsInstance(grf1, GRF1)
+        self.assertEqual(lm0.render(), "$lm0")
+        self.assertEqual(l1bm.render(), "$lb0")
+        self.assertEqual(grf1.render(), "$ls0")
+
+
 class OperandAddressArithmeticTests(unittest.TestCase):
     def test_direct_address_operand_addition_returns_same_type(self) -> None:
         operand = L1BM(addr=8) + 16
@@ -125,7 +173,7 @@ class OperandWidthConversionTests(unittest.TestCase):
         self.assertEqual(operand.render(), "$lln16v3")
 
     def test_grf_as_width_preserves_flat_addresses(self) -> None:
-        operand = GRF0.flat([0, 2, 4, 6]).as_width(WordWidth.DOUBLE_LONG)
+        operand = GRF1.flat([0, 2, 4, 6]).as_width(WordWidth.DOUBLE_LONG)
 
         self.assertEqual(operand.render(), "$lls[0,2,4,6]")
 

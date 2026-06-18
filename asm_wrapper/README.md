@@ -148,6 +148,13 @@ print(builder.to_source())
 
 for statement in builder.statements():
     print(type(statement).__name__, statement.kind)
+
+# メモリ型ごとの先頭アドレスを builder に管理させることもできる。
+lm0_tmp = builder.new_memory(LM0, 16, 8)
+l1bm_tmp = builder.new_memory(L1BM, 128, 128)
+
+print(lm0_tmp.render())
+print(l1bm_tmp.render())
 ```
 
 出力:
@@ -170,6 +177,9 @@ DebugStatement debug
 PseudoStatement pseudo
 PseudoStatement pseudo
 ```
+
+`new_memory(<メモリ型>, <サイズ>, <アライン>)` は、メモリ型ごとに独立したカーソルを持つ。
+たとえば `LM0` を 2 回割り当てると 2 回目は 1 回目の末尾から進み、`L1BM` の割り当て位置には影響しない。
 
 実行可能なサンプルは `examples/` に置いてある。
 

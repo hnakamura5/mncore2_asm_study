@@ -17,8 +17,13 @@ from .operands import (
     FixedInput,
     Forwarding,
     ForwardingKind,
+    GRF0,
+    GRF1,
     L1BM,
     L2BM,
+    LM0,
+    LM1,
+    MaskRegister,
     MauReadOperand,
     MAUHalfSelect,
     Matrix,
@@ -78,6 +83,128 @@ class InstructionBuilder:
         # `with builder.cycle(): ...` の間だけ有効になる同時発行バッファ。
         self._lines: list[Statement] = []
         self._active_cycle: list[InstructionStatement] | None = None
+        self._memory_tails: dict[type[object], int] = {}
+
+    def _memory_allocator_start(self, memory_type: type[object], *, align: int) -> int:
+        if align <= 0:
+            raise ValueError("align must be positive")
+        tail = self._memory_tails.get(
+            memory_type, 1 if memory_type is MaskRegister else 0
+        )
+        return ((tail + align - 1) // align) * align
+
+    @overload
+    def new_memory(self, memory_type: type[PDM], size: int, align: int = 2) -> PDM: ...
+
+    @overload
+    def new_memory(
+        self, memory_type: type[DRAM], size: int, align: int = 2
+    ) -> DRAM: ...
+
+    @overload
+    def new_memory(self, memory_type: type[DAR], size: int, align: int = 2) -> DAR: ...
+
+    @overload
+    def new_memory(
+        self, memory_type: type[L2BM], size: int, align: int = 2
+    ) -> L2BM: ...
+
+    @overload
+    def new_memory(
+        self, memory_type: type[L1BM], size: int, align: int = 2
+    ) -> L1BM: ...
+
+    @overload
+    def new_memory(self, memory_type: type[LM0], size: int, align: int = 2) -> LM0: ...
+
+    @overload
+    def new_memory(self, memory_type: type[LM1], size: int, align: int = 2) -> LM1: ...
+
+    @overload
+    def new_memory(
+        self, memory_type: type[GRF0], size: int, align: int = 2
+    ) -> GRF0: ...
+
+    @overload
+    def new_memory(
+        self, memory_type: type[GRF1], size: int, align: int = 2
+    ) -> GRF1: ...
+
+    @overload
+    def new_memory(
+        self, memory_type: type[MaskRegister], size: int, align: int = 2
+    ) -> MaskRegister: ...
+
+    def new_memory(
+        self,
+        memory_type: type[PDM]
+        | type[DRAM]
+        | type[DAR]
+        | type[L2BM]
+        | type[L1BM]
+        | type[LM0]
+        | type[LM1]
+        | type[GRF0]
+        | type[GRF1]
+        | type[MaskRegister],
+        size: int,
+        align: int = 2,
+    ) -> PDM | DRAM | DAR | L2BM | L1BM | LM0 | LM1 | GRF0 | GRF1 | MaskRegister:
+        """
+        指定したメモリ型の次の空き領域を割り当て、先頭アドレスを指す operand を返す。
+
+        各メモリ型は独立したアドレス空間として扱い、初回は 0 番地から始める。
+        `align` で切り上げた先頭番地を返し、内部カーソルは `size` ぶん進める。
+
+        入力と結果の例:
+            入力例: `builder.new_memory(LM0, 8, 8)`
+            結果例: 初回は `$lm0` を返し、次回の LM0 割り当て開始位置は 8 になる。
+
+        補足:
+            `size` と `align` の単位は各 operand のアドレス空間における 1 アドレス単位であり、
+            `ll` 幅や vector/flat 派生表記は返却後に呼び出し側で付与する。
+        """
+        if size <= 0:
+            raise ValueError("size must be positive")
+
+        start = self._memory_allocator_start(memory_type, align=align)
+        self._memory_tails[memory_type] = start + size
+
+        if memory_type in (LM0, LM1, GRF0, GRF1):
+            return memory_type.auto(start)
+        if memory_type in (PDM, DRAM, DAR, L2BM, L1BM, MaskRegister):
+            return memory_type(addr=start)
+        raise TypeError(f"Unsupported memory type: {memory_type!r}")
+
+    def new_pdm(self, size: int, align: int) -> PDM:
+        return self.new_memory(PDM, size, align)
+
+    def new_dram(self, size: int, align: int) -> DRAM:
+        return self.new_memory(DRAM, size, align)
+
+    def new_dar(self, size: int, align: int) -> DAR:
+        return self.new_memory(DAR, size, align)
+
+    def new_l2bm(self, size: int, align: int) -> L2BM:
+        return self.new_memory(L2BM, size, align)
+
+    def new_l1bm(self, size: int, align: int) -> L1BM:
+        return self.new_memory(L1BM, size, align)
+
+    def new_lm0(self, size: int, align: int) -> LM0:
+        return self.new_memory(LM0, size, align)
+
+    def new_lm1(self, size: int, align: int) -> LM1:
+        return self.new_memory(LM1, size, align)
+
+    def new_grf0(self, size: int, align: int) -> GRF0:
+        return self.new_memory(GRF0, size, align)
+
+    def new_grf1(self, size: int, align: int) -> GRF1:
+        return self.new_memory(GRF1, size, align)
+
+    def new_mask_register(self, size: int, align: int) -> MaskRegister:
+        return self.new_memory(MaskRegister, size, align)
 
     @contextmanager
     def cycle(self) -> Generator[InstructionBuilder, None, None]:

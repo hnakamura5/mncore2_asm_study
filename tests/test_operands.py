@@ -14,6 +14,8 @@ from asm_wrapper import (
     MaskRegister,
     Matrix,
     MatrixBank,
+    Nowrite,
+    PeVirtualMemory,
     negate_mau_input,
     with_write_mask_pattern,
     with_write_mask_register,
@@ -125,6 +127,102 @@ class BuilderMemoryAllocationTests(unittest.TestCase):
         self.assertEqual(lm0.render(), "$lm0")
         self.assertEqual(l1bm.render(), "$lb0")
         self.assertEqual(grf1.render(), "$ls0")
+
+    def test_new_memory_pe_virtual_returns_virtual_operand(self) -> None:
+        builder = InstructionBuilder()
+
+        operand = builder.new_memory_pe_virtual(8, 4)
+
+        self.assertIsInstance(operand, PeVirtualMemory)
+        self.assertEqual(operand.render(), "__pevr0_s8_a4_o0_wl_v0__")
+
+    def test_new_memory_pe_virtual_is_resolved_for_simple_cycle(self) -> None:
+        builder = InstructionBuilder()
+        src_x_operand = builder.new_memory_pe_virtual(600, 2).as_vector(True)
+        src_y_operand = builder.new_memory_pe_virtual(600, 2).as_vector(True)
+
+        with builder.cycle():
+            builder.fvadd(
+                src_x_operand=src_x_operand,
+                src_y_operand=src_y_operand,
+                dst_operands=[GRF0.auto(0, vector=True)],
+            )
+
+        self.assertEqual(builder.lines(), ("fvadd $lm0v $ln0v $lr0v",))
+
+    def test_new_memory_pe_virtual_fails_when_constraints_cannot_be_satisfied(
+        self,
+    ) -> None:
+        builder = InstructionBuilder()
+        left = builder.new_memory_pe_virtual(600, 2)
+        right = builder.new_memory_pe_virtual(600, 2)
+
+        with builder.cycle():
+            builder.imm(payload=0, dst_operands=[GRF0.auto(0)])
+            builder.fvadd(
+                src_x_operand=left,
+                src_y_operand=right,
+                dst_operands=[GRF0.auto(2)],
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "PE virtual allocation failed"):
+            builder.lines()
+
+    def test_new_memory_pe_virtual_resolves_across_multiple_busy_cycles(self) -> None:
+        builder = InstructionBuilder()
+        lm1_forced = builder.new_memory_pe_virtual(600, 2)
+        lm0_forced = builder.new_memory_pe_virtual(600, 2)
+        grf0_forced = builder.new_memory_pe_virtual(400, 2)
+        grf1_forced = builder.new_memory_pe_virtual(400, 2)
+
+        with builder.cycle():
+            builder.passa(
+                precision="l",
+                src_operand=lm1_forced,
+                dst_operands=[grf0_forced],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=lm0_forced,
+                dst_operands=[grf1_forced],
+            )
+
+        with builder.cycle():
+            builder.imm(payload=0, dst_operands=[GRF0.auto(0)])
+            builder.passa(
+                precision="l",
+                src_operand=lm1_forced,
+                dst_operands=[grf0_forced],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=grf0_forced,
+                dst_operands=[grf1_forced],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=grf1_forced,
+                dst_operands=[Nowrite()],
+            )
+
+        assignments = builder.resolve_pe_virtual_operands()
+
+        self.assertIsInstance(assignments[lm1_forced], LM1)
+        self.assertEqual(assignments[lm1_forced].render(), "$ln0")
+        self.assertIsInstance(assignments[lm0_forced], LM0)
+        self.assertEqual(assignments[lm0_forced].render(), "$lm0")
+        self.assertIsInstance(assignments[grf0_forced], GRF0)
+        self.assertEqual(assignments[grf0_forced].render(), "$lr0")
+        self.assertIsInstance(assignments[grf1_forced], GRF1)
+        self.assertEqual(assignments[grf1_forced].render(), "$ls0")
+
+        self.assertEqual(
+            builder.lines(),
+            (
+                "lpassa $ln0 $lr0; lpassa $lm0 $ls0",
+                "imm 0 $lr0; lpassa $ln0 $lr0; lpassa $lr0 $ls0; lpassa $ls0 $nowrite",
+            ),
+        )
 
 
 class OperandAddressArithmeticTests(unittest.TestCase):

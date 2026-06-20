@@ -30,12 +30,18 @@ from .operands import (
     MatrixVector,
     MvOperand,
     Nowrite,
+    PeVirtualMemory,
     PDM,
     PeReadOperand,
     PeWriteOperand,
     Renderable,
     RRNOpcode,
     WordWidth,
+)
+from .pe_virtual_allocator import (
+    Assignment,
+    resolve_pe_virtual_assignments,
+    resolve_pe_virtual_statements,
 )
 from .statements import (
     CycleStatement,
@@ -84,6 +90,8 @@ class InstructionBuilder:
         self._lines: list[Statement] = []
         self._active_cycle: list[InstructionStatement] | None = None
         self._memory_tails: dict[type[object], int] = {}
+        self._next_pe_virtual_id = 0
+        self._pe_virtual_roots: dict[int, PeVirtualMemory] = {}
 
     def _memory_allocator_start(self, memory_type: type[object], *, align: int) -> int:
         if align <= 0:
@@ -206,6 +214,47 @@ class InstructionBuilder:
     def new_mask_register(self, size: int, align: int) -> MaskRegister:
         return self.new_memory(MaskRegister, size, align)
 
+    def new_memory_pe_virtual(self, size: int, align: int = 2) -> PeVirtualMemory:
+        """
+        LM0/LM1/GRF0/GRF1 のいずれかへ後段で自動割り付けする仮想 PE メモリを返す。
+        """
+        virtual = PeVirtualMemory(
+            root_id=self._next_pe_virtual_id,
+            size=size,
+            align=align,
+        )
+        self._pe_virtual_roots[virtual.root_id] = virtual
+        self._next_pe_virtual_id += 1
+        return virtual
+
+    def resolve_pe_virtual_operands(
+        self,
+    ) -> dict[PeVirtualMemory, LM0 | LM1 | GRF0 | GRF1]:
+        """
+        仮想 PE メモリの現在の割り付け結果を、根オペランドごとに返す。
+        """
+        if self._active_cycle is not None:
+            raise RuntimeError(
+                "Cannot resolve virtual operands while a cycle context is open"
+            )
+
+        assignments = resolve_pe_virtual_assignments(self._lines)
+        return {
+            self._pe_virtual_roots[root_id]: self._assignment_to_operand(assignment)
+            for root_id, assignment in assignments.items()
+        }
+
+    def _assignment_to_operand(self, assignment: Assignment) -> LM0 | LM1 | GRF0 | GRF1:
+        if assignment.kind == "lm0":
+            return LM0.auto(assignment.base)
+        if assignment.kind == "lm1":
+            return LM1.auto(assignment.base)
+        if assignment.kind == "grf0":
+            return GRF0.auto(assignment.base)
+        if assignment.kind == "grf1":
+            return GRF1.auto(assignment.base)
+        raise AssertionError(f"Unknown PE physical kind: {assignment.kind}")
+
     @contextmanager
     def cycle(self) -> Generator[InstructionBuilder, None, None]:
         """
@@ -268,7 +317,7 @@ class InstructionBuilder:
         """
         if self._active_cycle is not None:
             raise RuntimeError("Cannot read lines while a cycle context is open")
-        return tuple(statement.render() for statement in self._lines)
+        return resolve_pe_virtual_statements(self._lines)
 
     def to_source(self) -> str:
         """

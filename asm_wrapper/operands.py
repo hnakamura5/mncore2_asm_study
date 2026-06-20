@@ -108,6 +108,40 @@ class Operand:
         raise NotImplementedError
 
 
+@dataclass(frozen=True)
+class PeVirtualMemory(Operand):
+    """LM0/LM1/GRF0/GRF1 のいずれかへ後段で割り付ける仮想 PE メモリ。"""
+
+    root_id: int
+    size: int
+    align: int
+    offset: int = 0
+    width: WordWidth = WordWidth.LONG
+    vector: bool = False
+
+    def __post_init__(self) -> None:
+        if self.size <= 0:
+            raise ValueError("size must be positive")
+        if self.align <= 0:
+            raise ValueError("align must be positive")
+
+    def as_width(self, width: WordWidth) -> Self:
+        return replace(self, width=width)
+
+    def as_vector(self, vector: bool = True) -> Self:
+        return replace(self, vector=vector)
+
+    def _offset_by(self, delta: int) -> Self:
+        return replace(self, offset=self.offset + delta)
+
+    def render(self) -> str:
+        vector_bit = 1 if self.vector else 0
+        return (
+            f"__pevr{self.root_id}_s{self.size}_a{self.align}"
+            f"_o{self.offset}_w{self.width.value}_v{vector_bit}__"
+        )
+
+
 _SUFFIX_WITH_MASK_RE = re.compile(r"^(?P<body>.*?)(?:/(?P<mask>[01]{4}))?$")
 _SUFFIX_ADDR_RE = re.compile(
     r"^(?P<t_prefix>t?)(?P<base>\[[0-9,]+\]|[0-9]+)(?P<vector>v[0-9]*)?(?P<madpe>j[0-9]+)?$"
@@ -946,11 +980,11 @@ SUBPEID: Final[FixedInput] = FixedInput(FixedInputKind.SUBPEID)
 MSB1: Final[FixedInput] = FixedInput(FixedInputKind.MSB1)
 
 
-PeReadOperand: TypeAlias = LM0 | LM1 | GRF0 | GRF1 | TReg | Forwarding
+PeReadOperand: TypeAlias = LM0 | LM1 | GRF0 | GRF1 | PeVirtualMemory | TReg | Forwarding
 AluReadOperand: TypeAlias = PeReadOperand | FixedInput
 MauReadOperand: TypeAlias = PeReadOperand | MauNegatedOperand
 MaskablePeWriteOperand: TypeAlias = (
-    LM0 | LM1 | GRF0 | GRF1 | TReg | MaskRegister | LM0Base | LM1Base
+    LM0 | LM1 | GRF0 | GRF1 | PeVirtualMemory | TReg | MaskRegister | LM0Base | LM1Base
 )
 PeWriteOperand: TypeAlias = MaskablePeWriteOperand | Nowrite | WriteMaskedOperand
 MvOperand: TypeAlias = PDM | DRAM | L2BM

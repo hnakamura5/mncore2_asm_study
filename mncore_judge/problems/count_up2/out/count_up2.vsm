@@ -2,21 +2,20 @@ ipassa $peid $lr0
 ipassa $l1bid $lr2; l1bmd $aluf $lb0
 ipassa $l2bid $lr4
 iinc $lr0v $lr6
-linc $aluf $lr8v; l1bmp $lb0 $llr16v
-iand $lr6v $lr20 $omr4; l1bmp $lb8 $llr32v
-ilsl $lm[2,4,8,10] $ls[32,22,44,42] $lr48
-iadd $lr48 $lr50 $lr52v
-iadd $lr48 $lr50 $lr52v
-iadd $lr52v $aluf $lr52v
-ilsl $ls[16,20,24,28] $lr40 $lr52v/$imr4
-iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
-iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
-iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
-iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
-iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
-iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
-iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
-iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
+linc $aluf $lr14v; l1bmp $llb0 $llm0v $lls0v
+iand $lr8 $lr16 $omr4; l1bmp $llb8 $llm16v
+ilsl $lm[2,4,8,10] $ls[16,6,28,26] $lr22
+iadd $aluf $lr24 $lr26v
+iadd $lr6 $aluf $lr26v
+ilsl $ls[0,4,8,12] $lm24 $lr26v/$imr4; l1bmd $lr26 $lb2
+iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb66; l2bmr2iiadd $lb2 $lc0
+iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb130; l2bmr2iiadd $lb66 $lc256
+iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb194; l2bmr2iiadd $lb130 $lc512
+iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb258; l2bmr2iiadd $lb194 $lc768
+iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb322; l2bmr2iiadd $lb258 $lc1024
+iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb386; l2bmr2iiadd $lb322 $lc1280
+l1bmd $aluf $lb450; l2bmr2iiadd $lb386 $lc1536
+l2bmr2iiadd $lb450 $lc1792
 nop
 mvd/n2048 $lc0 $p0
 mvp/n16384 $lc0 $d0

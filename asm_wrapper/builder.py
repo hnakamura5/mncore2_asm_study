@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Generator, Sequence, Self, overload
 
+from .aluf_auto_forwarding import apply_auto_aluf_forwarding
 from .debug import DebugDataType
 from .operands import (
     AluReadOperand,
@@ -317,7 +318,7 @@ class InstructionBuilder:
         """
         if self._active_cycle is not None:
             raise RuntimeError("Cannot read lines while a cycle context is open")
-        return resolve_pe_virtual_statements(self._lines)
+        return apply_auto_aluf_forwarding(resolve_pe_virtual_statements(self._lines))
 
     def to_source(self) -> str:
         """

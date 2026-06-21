@@ -275,6 +275,8 @@ class PDM(Operand):
 
     PDM はグループごとの上位メモリで、主に DRAM / L2BM との MV 転送に使う。
     `group` を省略した表記は manual 上「全グループの同一アドレス」を意味する。
+
+    アドレスは長語単位。
     """
 
     addr: int
@@ -294,6 +296,8 @@ class DRAM(Operand):
 
     `$d...` は長語単位の直接参照、`$di...` は DAR を介した間接参照であり、
     間接側は 16 長語単位で次の DAR エントリへ進む前提を持つ。
+
+    アドレスは長語単位。
     """
 
     addr: int
@@ -333,6 +337,8 @@ class L2BM(Operand):
     L2BM はグループ内外の放送・分配・縮約の中継点になる中間メモリで、
     MV 側では `@<group>.<l2b>` や `@.<l2b>` を伴う表記を使う。
     PE の L2BM 命令では通常 `$lc<addr>` のみを使う。
+
+    アドレスは長語単位。
     """
 
     addr: int
@@ -358,6 +364,8 @@ class L1BM(Operand):
 
     L1BM は PE 群への放送・MAB 単位転送・縮約に使うローカルブロードキャスト
     メモリで、`indirect=True` は折り返しレジスタ `lbi` を表す。
+
+    アドレスは長語単位。
     """
 
     addr: int | None = None

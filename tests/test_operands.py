@@ -220,8 +220,76 @@ class BuilderMemoryAllocationTests(unittest.TestCase):
             builder.lines(),
             (
                 "lpassa $ln0 $lr0; lpassa $lm0 $ls0",
-                "imm 0 $lr0; lpassa $ln0 $lr0; lpassa $lr0 $ls0; lpassa $ls0 $nowrite",
+                "imm 0 $lr0; lpassa $ln0 $lr0; lpassa $aluf $ls0; lpassa $aluf $nowrite",
             ),
+        )
+
+
+class AutoAlufForwardingTests(unittest.TestCase):
+    def test_auto_aluf_replaces_matching_alu_source_in_next_cycle(self) -> None:
+        builder = InstructionBuilder()
+
+        with builder.cycle():
+            builder.add(
+                precision="i",
+                src_x_operand=GRF0.auto(0),
+                src_y_operand=GRF0.auto(2),
+                dst_operands=[GRF0.auto(4)],
+            )
+
+        with builder.cycle():
+            builder.passa(
+                precision="i",
+                src_operand=GRF0.auto(4),
+                dst_operands=[GRF0.auto(6)],
+            )
+
+        self.assertEqual(
+            builder.lines(),
+            ("iadd $lr0 $lr2 $lr4", "ipassa $aluf $lr6"),
+        )
+
+    def test_auto_aluf_replaces_matching_non_alu_source_use(self) -> None:
+        builder = InstructionBuilder()
+
+        with builder.cycle():
+            builder.add(
+                precision="i",
+                src_x_operand=GRF0.auto(0),
+                src_y_operand=GRF0.auto(2),
+                dst_operands=[GRF0.auto(4)],
+            )
+
+        with builder.cycle():
+            builder.l1bmd(src_operand=GRF0.auto(4), dst_l1bm=L1BM(addr=0))
+
+        self.assertEqual(
+            builder.lines(),
+            ("iadd $lr0 $lr2 $lr4", "l1bmd $aluf $lb0"),
+        )
+
+    def test_auto_aluf_is_disabled_by_noforward(self) -> None:
+        builder = InstructionBuilder()
+
+        with builder.cycle():
+            builder.add(
+                precision="i",
+                src_x_operand=GRF0.auto(0),
+                src_y_operand=GRF0.auto(2),
+                dst_operands=[GRF0.auto(4)],
+            )
+            builder.noforward()
+
+        with builder.cycle():
+            builder.passa(
+                precision="i",
+                src_operand=GRF0.auto(4),
+                dst_operands=[GRF0.auto(6)],
+            )
+
+        self.assertEqual(
+            builder.lines(),
+            ("iadd $lr0 $lr2 $lr4; noforward", "ipassa $lr4 $lr6"),
         )
 
 
@@ -250,9 +318,9 @@ class OperandAddressArithmeticTests(unittest.TestCase):
         self.assertEqual(operand.flat_addrs, [8, 10, 12, 14])
 
     def test_dram_indirect_addition_offsets_dar_index(self) -> None:
-        operand = DRAM(dar_addr=3, group=0) + 2
+        operand = DRAM(addr=0, dar_addr=3, group=0) + 2
 
-        self.assertEqual(operand.render(), "$di5@0")
+        self.assertEqual(operand.render(), "$di3@0")
 
     def test_matrix_addition_offsets_matrix_addr(self) -> None:
         operand = Matrix(MatrixBank.X, 2) + 4
@@ -288,7 +356,7 @@ class OperandAddressMetadataTests(unittest.TestCase):
         operand = GRF0.auto(12, vector=True)
 
         self.assertEqual(operand.addr, 12)
-        self.assertIsNone(operand.flat_addrs)
+        self.assertEqual(operand.flat_addrs, [])
 
     def test_flat_mode_records_head_addr_and_flat_addrs(self) -> None:
         operand = LM1.flat([16, 18, 20, 22])

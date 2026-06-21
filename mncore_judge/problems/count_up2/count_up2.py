@@ -48,6 +48,12 @@ from asm_wrapper import (
 # 下位2bitをPE内で。subpeidで2bit、その後l1b方面で結合されるので、
 # l1bidで3bit, l2b方面で結合されるので3bit 残りの5bitを2*mabid+1で確保か
 
+# 下位から順に
+# 5bit 1~32 をL1B内のPEIDから確保、l1bmdで1~127まであつめてその32までを通過う
+# 3bit 0~7 をL2BID として確保l2bmr2の16長語(=32単語)ストライドでのl2bマタギに対応
+# 2bit 0~3を、L1BIDの上位2bitで確保。ここで、L2BにはL1BIDの偶数側からのみ転送することにする
+# 残りの5bitはPEで作って順に送出。これはL1BIDの奇数側にのみ転送して、l2bmr2のiaddを使って足していくことにする。
+
 
 def build() -> InstructionBuilder:
     ib = InstructionBuilder()
@@ -56,15 +62,22 @@ def build() -> InstructionBuilder:
     l1bid = ib.new_memory(GRF0, 2)
     l2bid = ib.new_memory(GRF0, 2)
     l1bm_peid_raw = ib.new_memory(L1BM, 2)
-    peid_1 = ib.new_memory(GRF0, 2)
+    l1bm_peid_raw_ll = l1bm_peid_raw.as_width(WordWidth.DOUBLE_LONG)
+    peid_0_1 = ib.new_memory(GRF0, 8)
+    l1bid_0_1 = peid_0_1 + 2
     peid_1_2 = ib.new_memory(GRF0, 8)
     imm_1 = peid_1_2 + 1 * 2
-    seq_in_pe = ib.new_memory(GRF0, 32)
+    seq_in_pe = ib.new_memory(LM0, 32, align=8)  # PEごとに0~8の単語繰り返し長語が入る
     seq_in_pe_ll = seq_in_pe.as_width(WordWidth.DOUBLE_LONG)
     seq_in_pe_ll_2 = seq_in_pe_ll + 8 * 2
+    seq_in_pe_copy = ib.new_memory(
+        GRF1, 32, align=8
+    )  # PEごとに0~8の単語繰り返し長語が入る
+    seq_in_pe_copy_ll = seq_in_pe_copy.as_width(WordWidth.DOUBLE_LONG)
+    seq_in_pe_copy_ll_2 = seq_in_pe_copy_ll + 8 * 2
     mask_l1bid_lsb1 = ib.new_memory(MaskRegister, 1)
     imm_0 = seq_in_pe + 0 * 2
-    imm_1 = seq_in_pe + 2 * 2
+    # imm_1 = seq_in_pe + 2 * 2
     imm_2 = seq_in_pe + 4 * 2
     imm_3 = seq_in_pe + 6 * 2
     imm_5 = seq_in_pe + 3 * 2
@@ -116,7 +129,7 @@ def build() -> InstructionBuilder:
 
     with ib.cycle():
         ib.passa(precision="i", src_operand=L1BID, dst_operands=[l1bid])
-        ib.l1bmd(src_operand=ALUF, dst_l1bm=l1bm_peid_raw)
+        ib.l1bmd(src_operand=peid_raw, dst_l1bm=l1bm_peid_raw)
 
     with ib.cycle():
         ib.passa(precision="i", src_operand=L2BID, dst_operands=[l2bid])
@@ -125,27 +138,34 @@ def build() -> InstructionBuilder:
         ib.inc(
             precision="i",
             src_operand=peid_raw.as_vector(),  # この後にl1bidもある
-            dst_operands=[peid_1],
+            dst_operands=[peid_0_1],
         )
+        # peid_0_1 に peid, peid + 1
+        # l1bid_0_1 に l1bid, l1bid + 1 が入る
 
     with ib.cycle():
         ib.inc(
             precision="l",
-            src_operand=ALUF,
+            src_operand=peid_0_1,
             dst_operands=[peid_1_2.as_vector()],
+        )  # peid_1_2 に peid, peid + 1, peid + 2, peid + 3 が入る
+        ib.l1bmp(
+            src_l1bm=l1bm_peid_raw_ll,
+            dst_operands=[seq_in_pe_ll.as_vector(), seq_in_pe_copy_ll.as_vector()],
         )
-        ib.l1bmp(src_l1bm=l1bm_peid_raw, dst_operands=[seq_in_pe_ll.as_vector()])
         # 結合したのを戻して、PEごとに0 ~ 8 の単語繰り返し長語が入る
         # 順番は 0, 4, 1, 5, 2, 6, 3, 7
 
     with ib.cycle():
         ib.and_(
             precision="i",
-            src_x_operand=peid_1.as_vector(),
+            src_x_operand=l1bid_0_1,
             src_y_operand=imm_1,
             dst_operands=[mask_l1bid_lsb1],
         )  # l1bmdの下位1bitに対応するマスク
-        ib.l1bmp(src_l1bm=l1bm_peid_raw + 8, dst_operands=[seq_in_pe_ll_2.as_vector()])
+        ib.l1bmp(
+            src_l1bm=l1bm_peid_raw_ll + 8, dst_operands=[seq_in_pe_ll_2.as_vector()]
+        )
         # 結合したのを戻して、PEごとに0 ~ 8 の単語繰り返し長語が入る
         # 順番は 8, C, 9, D, A, E, B, F
 
@@ -168,25 +188,19 @@ def build() -> InstructionBuilder:
         ib.add(
             precision="i",
             src_x_operand=l1bid_shift8,
-            src_y_operand=l2bid_shift5,  # これがL1同士でかぶっているのでは？
+            src_y_operand=l2bid_shift5,
             dst_operands=[pe_result_8s.as_vector()],
         )
+        # l1bid << 8 + l2bid << 5 の結果がpe_result_8sに入る
 
     with ib.cycle():
         ib.add(
             precision="i",
-            src_x_operand=l1bid_shift8,
-            src_y_operand=l2bid_shift5,  # これがL1でかぶっている
+            src_x_operand=peid_0_1,
+            src_y_operand=pe_result_8s.as_vector(),
             dst_operands=[pe_result_8s.as_vector()],
         )
-
-    with ib.cycle():
-        ib.add(
-            precision="i",
-            src_x_operand=pe_result_8s.as_vector(),
-            src_y_operand=ALUF,
-            dst_operands=[pe_result_8s.as_vector()],
-        )
+        # peid_1 (1~127) + (l1bid << 8 + l2bid << 5) の結果がpe_result_8sに入る
 
     with ib.cycle():
         ib.lsl(
@@ -203,19 +217,32 @@ def build() -> InstructionBuilder:
             dst_operands=[
                 with_write_mask_register(pe_result_8s.as_vector(), mask_l1bid_lsb1)
             ],
-        )
-        ib.l1bmd(src_operand=pe_result_8s.as_vector(), dst_l1bm=l1bm_result)
+        )  # l1bidの下位1bitが1のPEに対して、pe_result_8sに、上位5bit用の定数群で上書きする
+        ib.l1bmd(src_operand=pe_result_8s, dst_l1bm=l1bm_result)
 
     for i in range(8):
         with ib.cycle():
-            ib.add(
-                precision="i",
-                src_x_operand=pe_result_8s.as_vector(),
-                src_y_operand=ALUF,
-                dst_operands=[pe_result_8s.as_vector()],
+            if i < 6:
+                ib.add(
+                    precision="i",
+                    src_x_operand=pe_result_8s.as_vector(),
+                    src_y_operand=ALUF,
+                    dst_operands=[
+                        with_write_mask_register(
+                            pe_result_8s.as_vector(), mask_l1bid_lsb1
+                        )
+                    ],
+                )
+            if i < 7:
+                ib.l1bmd(
+                    src_operand=pe_result_8s.as_vector(),
+                    dst_l1bm=l1bm_result + 64 * (i + 1),
+                )
+            ib.l2bmr2(
+                rrn_opcode="iiadd",
+                src_l1bm=l1bm_result + 64 * i,
+                dst_l2bm=l2bm_result + 256 * i,
             )
-            ib.l1bmd(src_operand=pe_result_8s.as_vector(), dst_l1bm=l1bm_result)
-            ib.l2bmr2(rrn_opcode="iiadd", src_l1bm=l1bm_result, dst_l2bm=l2bm_result)
 
     ib.nop()
 

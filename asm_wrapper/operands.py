@@ -142,6 +142,26 @@ class PeVirtualMemory(Operand):
         )
 
 
+@dataclass(frozen=True)
+class PeVirtualFlatMemory(Operand):
+    """複数の仮想 PE メモリを flat モード 1 オペランドとして束ねる。"""
+
+    operands: tuple[PeVirtualMemory, PeVirtualMemory, PeVirtualMemory, PeVirtualMemory]
+    width: WordWidth = WordWidth.LONG
+    cycle_mask: str | None = None
+
+    def as_width(self, width: WordWidth) -> Self:
+        return replace(self, width=width)
+
+    def render(self) -> str:
+        encoded_operands = "_".join(
+            f"r{operand.root_id}s{operand.size}a{operand.align}o{operand.offset}"
+            for operand in self.operands
+        )
+        mask_suffix = "" if self.cycle_mask is None else f"_m{self.cycle_mask}"
+        return f"__pevrf_w{self.width.value}{mask_suffix}_{encoded_operands}__"
+
+
 _SUFFIX_WITH_MASK_RE = re.compile(r"^(?P<body>.*?)(?:/(?P<mask>[01]{4}))?$")
 _SUFFIX_ADDR_RE = re.compile(
     r"^(?P<t_prefix>t?)(?P<base>\[[0-9,]+\]|[0-9]+)(?P<vector>v[0-9]*)?(?P<madpe>j[0-9]+)?$"
@@ -1044,11 +1064,22 @@ SUBPEID: Final[FixedInput] = FixedInput(FixedInputKind.SUBPEID)
 MSB1: Final[FixedInput] = FixedInput(FixedInputKind.MSB1)
 
 
-PeReadOperand: TypeAlias = LM0 | LM1 | GRF0 | GRF1 | PeVirtualMemory | TReg | Forwarding
+PeReadOperand: TypeAlias = (
+    LM0 | LM1 | GRF0 | GRF1 | PeVirtualMemory | PeVirtualFlatMemory | TReg | Forwarding
+)
 AluReadOperand: TypeAlias = PeReadOperand | FixedInput
 MauReadOperand: TypeAlias = PeReadOperand | MauNegatedOperand
 MaskablePeWriteOperand: TypeAlias = (
-    LM0 | LM1 | GRF0 | GRF1 | PeVirtualMemory | TReg | MaskRegister | LM0Base | LM1Base
+    LM0
+    | LM1
+    | GRF0
+    | GRF1
+    | PeVirtualMemory
+    | PeVirtualFlatMemory
+    | TReg
+    | MaskRegister
+    | LM0Base
+    | LM1Base
 )
 PeWriteOperand: TypeAlias = MaskablePeWriteOperand | Nowrite | WriteMaskedOperand
 MvOperand: TypeAlias = PDM | DRAM | L2BM

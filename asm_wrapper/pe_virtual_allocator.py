@@ -14,6 +14,13 @@ _PE_VIRTUAL_RE = re.compile(
     r"__pevr(?P<root_id>\d+)_s(?P<size>\d+)_a(?P<align>\d+)"
     r"_o(?P<offset>-?\d+)_w(?P<width>l|ll)_v(?P<vector>[01])__"
 )
+_PE_VIRTUAL_FLAT_RE = re.compile(
+    r"__pevrf_w(?P<width>l|ll)(?:_m(?P<cycle_mask>[01]{4}))?"
+    r"_r(?P<root0>\d+)s(?P<size0>\d+)a(?P<align0>\d+)o(?P<offset0>-?\d+)"
+    r"_r(?P<root1>\d+)s(?P<size1>\d+)a(?P<align1>\d+)o(?P<offset1>-?\d+)"
+    r"_r(?P<root2>\d+)s(?P<size2>\d+)a(?P<align2>\d+)o(?P<offset2>-?\d+)"
+    r"_r(?P<root3>\d+)s(?P<size3>\d+)a(?P<align3>\d+)o(?P<offset3>-?\d+)__"
+)
 _PHYSICAL_PE_RE = re.compile(r"^\$(?P<width>ll|l)(?P<kind>[mnrs])(?P<body>.+)$")
 _PHYSICAL_DIRECT_RE = re.compile(
     r"^\$(?P<width>ll|l)(?P<kind>[mnrs])(?P<addr>\d+)(?P<vector>v)?$"
@@ -56,6 +63,7 @@ class CycleInfo:
     texts: list[str]
     virtual_uses: dict[int, list[VirtualUse]]
     concrete_by_kind: dict[str, set[str]]
+    same_kind_groups: list[frozenset[int]]
     has_imm: bool
 
     @property
@@ -75,6 +83,7 @@ class RootState:
     reasons: list[str]
     max_cycle_pressure: int = 0
     interference: set[int] = field(default_factory=set)
+    same_kind_peers: set[int] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -83,15 +92,27 @@ class Assignment:
     base: int
 
 
+@dataclass(frozen=True)
+class FlatVirtualToken:
+    token: str
+    root_uses: tuple[VirtualUse, VirtualUse, VirtualUse, VirtualUse]
+    width: WordWidth
+    cycle_mask: str | None
+
+
 def resolve_pe_virtual_assignments(
     statements: tuple[Statement, ...] | list[Statement],
 ) -> dict[int, Assignment]:
     cycles, all_uses = _collect_cycles_and_uses(statements)
     if not all_uses:
         return {}
-
-    roots = _build_root_states(cycles, all_uses)
-    return _assign_roots(roots)
+    try:
+        roots = _build_root_states(cycles, all_uses)
+        return _assign_roots(roots)
+    except PeVirtualAllocationError as exc:
+        raise PeVirtualAllocationError(
+            _append_diagnostic_log(str(exc), cycles, all_uses)
+        ) from exc
 
 
 def resolve_pe_virtual_statements(
@@ -100,14 +121,86 @@ def resolve_pe_virtual_statements(
     cycles, all_uses = _collect_cycles_and_uses(statements)
     if not all_uses:
         return tuple(statement.render() for statement in statements)
+    try:
+        roots = _build_root_states(cycles, all_uses)
+        assignments = _assign_roots(roots)
+        flat_virtual_tokens = _collect_flat_virtual_tokens(statements)
+        replacements = {
+            use.token: _render_physical_use(use, assignments[use.root_id])
+            for use in all_uses
+        }
+        replacements.update(
+            {
+                token.token: _render_flat_virtual_token(token, assignments)
+                for token in flat_virtual_tokens
+            }
+        )
+        return tuple(
+            _render_statement(statement, replacements) for statement in statements
+        )
+    except PeVirtualAllocationError as exc:
+        raise PeVirtualAllocationError(
+            _append_diagnostic_log(str(exc), cycles, all_uses)
+        ) from exc
 
-    roots = _build_root_states(cycles, all_uses)
-    assignments = _assign_roots(roots)
-    replacements = {
-        use.token: _render_physical_use(use, assignments[use.root_id])
-        for use in all_uses
-    }
-    return tuple(_render_statement(statement, replacements) for statement in statements)
+
+def _append_diagnostic_log(
+    message: str,
+    cycles: list[CycleInfo],
+    all_uses: list[VirtualUse],
+) -> str:
+    if "Cycle log:" in message or "Root log:" in message:
+        return message
+    if not cycles and not all_uses:
+        return message
+
+    diagnostic_lines: list[str] = [message]
+    if cycles:
+        diagnostic_lines.append("Cycle log:")
+        for cycle in cycles:
+            diagnostic_lines.append(f"  [{cycle.index}] {'; '.join(cycle.texts)}")
+
+    root_log_lines = _build_root_log_lines(cycles, all_uses)
+    if root_log_lines:
+        diagnostic_lines.append("Root log:")
+        diagnostic_lines.extend(root_log_lines)
+
+    return "\n".join(diagnostic_lines)
+
+
+def _build_root_log_lines(
+    cycles: list[CycleInfo],
+    all_uses: list[VirtualUse],
+) -> list[str]:
+    if not all_uses:
+        return []
+
+    cycle_indexes_by_root_id: dict[int, set[int]] = {}
+    for cycle in cycles:
+        for root_id in cycle.virtual_uses:
+            cycle_indexes_by_root_id.setdefault(root_id, set()).add(cycle.index)
+
+    uses_by_root_id: dict[int, list[VirtualUse]] = {}
+    for use in all_uses:
+        uses_by_root_id.setdefault(use.root_id, []).append(use)
+
+    root_log_lines: list[str] = []
+    for root_id in sorted(uses_by_root_id):
+        root_uses = uses_by_root_id[root_id]
+        size = root_uses[0].size
+        align = root_uses[0].align
+        offsets = sorted({use.offset for use in root_uses})
+        widths = sorted({use.width.value for use in root_uses})
+        vectors = sorted({int(use.vector) for use in root_uses})
+        tokens = sorted({use.token for use in root_uses})
+        cycle_indexes = sorted(cycle_indexes_by_root_id.get(root_id, set()))
+        root_log_lines.append(
+            "  "
+            f"root {root_id}: size={size}, align={align}, offsets={offsets}, "
+            f"widths={widths}, vectors={vectors}, cycles={cycle_indexes}, "
+            f"tokens={tokens}"
+        )
+    return root_log_lines
 
 
 def _collect_cycles_and_uses(
@@ -123,12 +216,13 @@ def _collect_cycles_and_uses(
             text = getattr(statement, "text", None)
             if not isinstance(text, str):
                 continue
-            if not _PE_VIRTUAL_RE.search(text):
+            if not (_PE_VIRTUAL_RE.search(text) or _PE_VIRTUAL_FLAT_RE.search(text)):
                 continue
             texts = [text]
 
         virtual_uses: dict[int, list[VirtualUse]] = {}
         concrete_by_kind: dict[str, set[str]] = {}
+        same_kind_groups: list[frozenset[int]] = []
         has_imm = False
 
         for text in texts:
@@ -144,6 +238,15 @@ def _collect_cycles_and_uses(
                     virtual_uses.setdefault(use.root_id, []).append(use)
                     all_uses.append(use)
                     continue
+                flat_token = _parse_flat_virtual_token(base_token)
+                if flat_token is not None:
+                    root_ids: list[int] = []
+                    for use in flat_token.root_uses:
+                        virtual_uses.setdefault(use.root_id, []).append(use)
+                        all_uses.append(use)
+                        root_ids.append(use.root_id)
+                    same_kind_groups.append(frozenset(root_ids))
+                    continue
                 kind = _physical_kind_from_token(base_token)
                 if kind is not None:
                     concrete_by_kind.setdefault(kind, set()).add(base_token)
@@ -155,6 +258,7 @@ def _collect_cycles_and_uses(
                     texts=texts,
                     virtual_uses=virtual_uses,
                     concrete_by_kind=concrete_by_kind,
+                    same_kind_groups=same_kind_groups,
                     has_imm=has_imm,
                 )
             )
@@ -200,6 +304,13 @@ def _build_root_states(
 
     for cycle in cycles:
         cycle_root_ids = list(cycle.virtual_uses)
+        same_kind_pairs = {
+            tuple(sorted((left_root_id, right_root_id)))
+            for group in cycle.same_kind_groups
+            for left_root_id in group
+            for right_root_id in group
+            if left_root_id != right_root_id
+        }
         for index, root_id in enumerate(cycle_root_ids):
             root = roots[root_id]
             root.cycles.append(cycle.index)
@@ -217,9 +328,19 @@ def _build_root_states(
                     f"cycle {cycle.index}: root {root_id} cannot use LM0 because it is issued with imm"
                 )
             for other_root_id in cycle_root_ids[index + 1 :]:
+                if tuple(sorted((root_id, other_root_id))) in same_kind_pairs:
+                    root.same_kind_peers.add(other_root_id)
+                    roots[other_root_id].same_kind_peers.add(root_id)
+                    continue
                 root.interference.add(other_root_id)
                 roots[other_root_id].interference.add(root_id)
 
+    for cycle in cycles:
+        for root_id in cycle.virtual_uses:
+            root = roots[root_id]
+            signatures = {use.signature for use in cycle.virtual_uses[root_id]}
+            if not signatures:
+                continue
             for kind, concrete_tokens in cycle.concrete_by_kind.items():
                 if kind not in root.candidates:
                     continue
@@ -246,6 +367,8 @@ def _build_root_states(
                     )
                     continue
                 root.fixed_bases[kind] = fixed_base
+
+    _propagate_same_kind_candidates(roots)
 
     for root in roots.values():
         root.candidates = {
@@ -303,6 +426,11 @@ def _assign_single_root(
     assignments: dict[int, Assignment],
 ) -> Assignment | None:
     for kind in sorted(root.candidates, key=lambda item: (_KIND_CAPACITY[item], item)):
+        if any(
+            peer_root_id in assignments and assignments[peer_root_id].kind != kind
+            for peer_root_id in root.same_kind_peers
+        ):
+            continue
         fixed_base = root.fixed_bases.get(kind)
         if fixed_base is not None:
             if _base_available(root, kind, fixed_base, roots, assignments):
@@ -317,6 +445,37 @@ def _assign_single_root(
             base += root.align
 
     return None
+
+
+def _propagate_same_kind_candidates(roots: dict[int, RootState]) -> None:
+    remaining_root_ids = set(roots)
+    while remaining_root_ids:
+        root_id = remaining_root_ids.pop()
+        component = {root_id}
+        pending_root_ids = [root_id]
+        while pending_root_ids:
+            current_root_id = pending_root_ids.pop()
+            for peer_root_id in roots[current_root_id].same_kind_peers:
+                if peer_root_id in component:
+                    continue
+                component.add(peer_root_id)
+                if peer_root_id in remaining_root_ids:
+                    remaining_root_ids.remove(peer_root_id)
+                pending_root_ids.append(peer_root_id)
+
+        if len(component) <= 1:
+            continue
+        component_roots = [roots[component_root_id] for component_root_id in component]
+        shared_candidates = set(component_roots[0].candidates)
+        for component_root in component_roots[1:]:
+            shared_candidates &= component_root.candidates
+        for component_root_id in component:
+            roots[component_root_id].candidates &= shared_candidates
+            if not roots[component_root_id].candidates:
+                details = "; ".join(roots[component_root_id].reasons)
+                raise PeVirtualAllocationError(
+                    f"PE virtual allocation failed: root {component_root_id} has no available physical PE memory kind after same-kind propagation ({details or 'same-kind flat constraint'})"
+                )
 
 
 def _base_available(
@@ -387,6 +546,73 @@ def _parse_virtual_use(token: str) -> VirtualUse | None:
     )
 
 
+def _parse_flat_virtual_token(token: str) -> FlatVirtualToken | None:
+    match = _PE_VIRTUAL_FLAT_RE.fullmatch(token)
+    if match is None:
+        return None
+    return FlatVirtualToken(
+        token=token,
+        root_uses=(
+            VirtualUse(
+                root_id=int(match.group("root0")),
+                size=int(match.group("size0")),
+                align=int(match.group("align0")),
+                offset=int(match.group("offset0")),
+                width=WordWidth(match.group("width")),
+                vector=False,
+                token=token,
+            ),
+            VirtualUse(
+                root_id=int(match.group("root1")),
+                size=int(match.group("size1")),
+                align=int(match.group("align1")),
+                offset=int(match.group("offset1")),
+                width=WordWidth(match.group("width")),
+                vector=False,
+                token=token,
+            ),
+            VirtualUse(
+                root_id=int(match.group("root2")),
+                size=int(match.group("size2")),
+                align=int(match.group("align2")),
+                offset=int(match.group("offset2")),
+                width=WordWidth(match.group("width")),
+                vector=False,
+                token=token,
+            ),
+            VirtualUse(
+                root_id=int(match.group("root3")),
+                size=int(match.group("size3")),
+                align=int(match.group("align3")),
+                offset=int(match.group("offset3")),
+                width=WordWidth(match.group("width")),
+                vector=False,
+                token=token,
+            ),
+        ),
+        width=WordWidth(match.group("width")),
+        cycle_mask=match.group("cycle_mask"),
+    )
+
+
+def _collect_flat_virtual_tokens(
+    statements: Iterable[Statement],
+) -> list[FlatVirtualToken]:
+    flat_virtual_tokens: list[FlatVirtualToken] = []
+    seen_tokens: set[str] = set()
+    for statement in statements:
+        text = statement.render()
+        for match in _PE_VIRTUAL_FLAT_RE.finditer(text):
+            token = match.group(0)
+            if token in seen_tokens:
+                continue
+            seen_tokens.add(token)
+            parsed_token = _parse_flat_virtual_token(token)
+            if parsed_token is not None:
+                flat_virtual_tokens.append(parsed_token)
+    return flat_virtual_tokens
+
+
 def _physical_kind_from_token(token: str) -> str | None:
     match = _PHYSICAL_PE_RE.fullmatch(token)
     if match is None:
@@ -428,6 +654,47 @@ def _render_physical_use(use: VirtualUse, assignment: Assignment) -> str:
     raise AssertionError(f"Unknown PE physical kind: {assignment.kind}")
 
 
+def _render_flat_virtual_token(
+    flat_virtual_token: FlatVirtualToken,
+    assignments: dict[int, Assignment],
+) -> str:
+    kinds = {assignments[use.root_id].kind for use in flat_virtual_token.root_uses}
+    if len(kinds) != 1:
+        raise PeVirtualAllocationError(
+            "PE virtual allocation failed: flat virtual operand roots were not assigned the same physical kind"
+        )
+    kind = next(iter(kinds))
+    addresses = [
+        assignments[use.root_id].base + use.offset
+        for use in flat_virtual_token.root_uses
+    ]
+    if kind == "lm0":
+        return LM0.flat(
+            addresses,
+            width=flat_virtual_token.width,
+            cycle_mask=flat_virtual_token.cycle_mask,
+        ).render()
+    if kind == "lm1":
+        return LM1.flat(
+            addresses,
+            width=flat_virtual_token.width,
+            cycle_mask=flat_virtual_token.cycle_mask,
+        ).render()
+    if kind == "grf0":
+        return GRF0.flat(
+            addresses,
+            width=flat_virtual_token.width,
+            cycle_mask=flat_virtual_token.cycle_mask,
+        ).render()
+    if kind == "grf1":
+        return GRF1.flat(
+            addresses,
+            width=flat_virtual_token.width,
+            cycle_mask=flat_virtual_token.cycle_mask,
+        ).render()
+    raise AssertionError(f"Unknown PE physical kind: {kind}")
+
+
 def _render_statement(statement: Statement, replacements: dict[str, str]) -> str:
     if isinstance(statement, CycleStatement):
         return "; ".join(
@@ -449,4 +716,5 @@ def _replace_tokens(text: str, replacements: dict[str, str]) -> str:
         token = match.group(0)
         return replacements.get(token, token)
 
-    return _PE_VIRTUAL_RE.sub(replace, text)
+    replaced_text = _PE_VIRTUAL_FLAT_RE.sub(replace, text)
+    return _PE_VIRTUAL_RE.sub(replace, replaced_text)

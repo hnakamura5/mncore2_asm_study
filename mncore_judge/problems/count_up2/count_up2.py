@@ -58,16 +58,53 @@ from asm_wrapper import (
 def build() -> InstructionBuilder:
     ib = InstructionBuilder()
 
-    peid_raw = ib.new_memory(GRF0, 2)
-    l1bid = ib.new_memory(GRF0, 2)
-    l2bid = ib.new_memory(GRF0, 2)
+    # peid_raw = ib.new_memory(GRF0, 2)
+    # l1bid = ib.new_memory(GRF0, 2)
+    # l2bid = ib.new_memory(GRF0, 2)
+    # l1bm_peid_raw = ib.new_memory(L1BM, 2)
+    # l1bm_peid_raw_ll = l1bm_peid_raw.as_width(WordWidth.DOUBLE_LONG)
+    # peid_0_1 = ib.new_memory(GRF0, 8)
+    # l1bid_0_1 = peid_0_1 + 2
+    # peid_1_2 = ib.new_memory(GRF0, 8)
+    # imm_1 = peid_1_2 + 1 * 2
+    # seq_in_pe = ib.new_memory(LM0, 32, align=8)  # PEごとに0~8の単語繰り返し長語が入る
+    # seq_in_pe_ll = seq_in_pe.as_width(WordWidth.DOUBLE_LONG)
+    # seq_in_pe_ll_2 = seq_in_pe_ll + 8 * 2
+    # seq_in_pe_copy = ib.new_memory(
+    #     GRF1, 32, align=8
+    # )  # PEごとに0~8の単語繰り返し長語が入る
+    # seq_in_pe_copy_ll = seq_in_pe_copy.as_width(WordWidth.DOUBLE_LONG)
+    # seq_in_pe_copy_ll_2 = seq_in_pe_copy_ll + 8 * 2
+    # mask_l1bid_lsb1 = ib.new_memory(MaskRegister, 1)
+    # imm_0 = seq_in_pe + 0 * 2
+    # # imm_1 = seq_in_pe + 2 * 2
+    # imm_2 = seq_in_pe + 4 * 2
+    # imm_3 = seq_in_pe + 6 * 2
+    # imm_5 = seq_in_pe + 3 * 2
+    # imm_8 = seq_in_pe + 8 * 2
+    # imm_12 = seq_in_pe + 14 * 2
+    # imm_14 = seq_in_pe + 13 * 2
+    # l1bid_shift8 = ib.new_memory(GRF0, 2)
+    # l2bid_shift5 = ib.new_memory(GRF0, 2)
+    # pe_result_8s = ib.new_memory(GRF0, 8)
+    # mask_l1bid_lsb1 = ib.new_memory(MaskRegister, 1)
+    # l1bm_result = ib.new_memory(L1BM, 512)
+    # l2bm_result = ib.new_memory(L2BM, 512)
+    # pdm_result = ib.new_memory(PDM, 16384)
+    # dram_result = ib.new_memory(DRAM, 32678)
+
+    peid_raw = ib.new_memory_pe_virtual(2)
+    l1bid = ib.new_memory_pe_virtual(8)
+    l2bid = l1bid + 2
     l1bm_peid_raw = ib.new_memory(L1BM, 2)
     l1bm_peid_raw_ll = l1bm_peid_raw.as_width(WordWidth.DOUBLE_LONG)
-    peid_0_1 = ib.new_memory(GRF0, 8)
+    peid_0_1 = ib.new_memory_pe_virtual(8)
     l1bid_0_1 = peid_0_1 + 2
-    peid_1_2 = ib.new_memory(GRF0, 8)
+    peid_1_2 = ib.new_memory_pe_virtual(8)
     imm_1 = peid_1_2 + 1 * 2
-    seq_in_pe = ib.new_memory(LM0, 32, align=8)  # PEごとに0~8の単語繰り返し長語が入る
+    seq_in_pe = ib.new_memory_pe_virtual(
+        32, align=8
+    )  # PEごとに0~8の単語繰り返し長語が入る
     seq_in_pe_ll = seq_in_pe.as_width(WordWidth.DOUBLE_LONG)
     seq_in_pe_ll_2 = seq_in_pe_ll + 8 * 2
     seq_in_pe_copy = ib.new_memory(
@@ -163,6 +200,7 @@ def build() -> InstructionBuilder:
             src_y_operand=imm_1,
             dst_operands=[mask_l1bid_lsb1],
         )  # l1bmdの下位1bitに対応するマスク
+    with ib.cycle():
         ib.l1bmp(
             src_l1bm=l1bm_peid_raw_ll + 8, dst_operands=[seq_in_pe_ll_2.as_vector()]
         )
@@ -172,14 +210,9 @@ def build() -> InstructionBuilder:
     with ib.cycle():
         ib.lsl(
             precision="i",
-            src_x_operand=LM0.flat([l1bid.addr, l2bid.addr, 8, 10]),
-            src_y_operand=GRF1.flat(
-                [
-                    seq_in_pe.addr + 8 * 2,  # 8
-                    seq_in_pe.addr + 3 * 2,  # 5
-                    seq_in_pe.addr + 14 * 2,  # 12
-                    seq_in_pe.addr + 13 * 2,  # 14
-                ]
+            src_x_operand=l1bid.as_vector(),  # l1bid, l2bid, 1, 1
+            src_y_operand=ib.pe_virtual_flat(
+                [imm_8, imm_5, imm_12, imm_14]
             ),  # 8, 5, 12, 14
             dst_operands=[l1bid_shift8],  # この後にl2bid_shift5もある。ここで二か所？
         )
@@ -205,14 +238,7 @@ def build() -> InstructionBuilder:
     with ib.cycle():
         ib.lsl(
             precision="i",
-            src_x_operand=GRF1.flat(
-                [
-                    seq_in_pe.addr + 0 * 2,  # 0
-                    seq_in_pe.addr + 2 * 2,  # 1
-                    seq_in_pe.addr + 4 * 2,  # 2
-                    seq_in_pe.addr + 6 * 2,  # 3
-                ]
-            ),
+            src_x_operand=ib.pe_virtual_flat([imm_0, imm_1, imm_2, imm_3]),
             src_y_operand=seq_in_pe + 12 * 2,  # 10
             dst_operands=[
                 with_write_mask_register(pe_result_8s.as_vector(), mask_l1bid_lsb1)

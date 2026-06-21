@@ -31,6 +31,7 @@ from .operands import (
     MatrixVector,
     MvOperand,
     Nowrite,
+    PeVirtualFlatMemory,
     PeVirtualMemory,
     PDM,
     PeReadOperand,
@@ -227,6 +228,26 @@ class InstructionBuilder:
         self._pe_virtual_roots[virtual.root_id] = virtual
         self._next_pe_virtual_id += 1
         return virtual
+
+    def pe_virtual_flat(
+        self,
+        operands: Sequence[PeVirtualMemory],
+        *,
+        width: WordWidth = WordWidth.LONG,
+        cycle_mask: str | None = None,
+    ) -> PeVirtualFlatMemory:
+        """
+        4 個の仮想 PE メモリを flat モードの 1 オペランドとして束ねる。
+
+        指定した仮想オペランド群は、後段の割り付けで必ず同じ物理種別へ解決される。
+        """
+        if len(operands) != 4:
+            raise ValueError("pe_virtual_flat requires exactly 4 virtual operands")
+        return PeVirtualFlatMemory(
+            operands=(operands[0], operands[1], operands[2], operands[3]),
+            width=width,
+            cycle_mask=cycle_mask,
+        )
 
     def resolve_pe_virtual_operands(
         self,

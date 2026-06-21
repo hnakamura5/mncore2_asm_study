@@ -15,6 +15,7 @@ from asm_wrapper import (
     Matrix,
     MatrixBank,
     Nowrite,
+    PeVirtualFlatMemory,
     PeVirtualMemory,
     negate_mau_input,
     with_write_mask_pattern,
@@ -165,7 +166,10 @@ class BuilderMemoryAllocationTests(unittest.TestCase):
                 dst_operands=[GRF0.auto(2)],
             )
 
-        with self.assertRaisesRegex(RuntimeError, "PE virtual allocation failed"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"(?s)PE virtual allocation failed.*Cycle log:.*imm 0 \$lr0; fvadd.*Root log:.*root 1:.*tokens=",
+        ):
             builder.lines()
 
     def test_new_memory_pe_virtual_resolves_across_multiple_busy_cycles(self) -> None:
@@ -223,6 +227,133 @@ class BuilderMemoryAllocationTests(unittest.TestCase):
                 "imm 0 $lr0; lpassa $ln0 $lr0; lpassa $aluf $ls0; lpassa $aluf $nowrite",
             ),
         )
+
+    def test_new_memory_pe_virtual_offset_resolves_to_same_kind(self) -> None:
+        builder = InstructionBuilder()
+        base = builder.new_memory_pe_virtual(16, 4)
+        offset = base + 8
+
+        with builder.cycle():
+            builder.imm(payload=0, dst_operands=[GRF0.auto(0)])
+            builder.passa(
+                precision="l",
+                src_operand=GRF1.auto(0),
+                dst_operands=[base.as_vector()],
+            )
+
+        with builder.cycle():
+            builder.passa(
+                precision="l",
+                src_operand=offset,
+                dst_operands=[GRF0.auto(2)],
+            )
+
+        assignments = builder.resolve_pe_virtual_operands()
+
+        self.assertEqual(base.root_id, offset.root_id)
+        self.assertEqual(base.offset, 0)
+        self.assertEqual(offset.offset, 8)
+        self.assertIsInstance(assignments[base], LM1)
+        self.assertEqual(assignments[base].render(), "$ln0")
+        self.assertEqual(
+            builder.lines(),
+            (
+                "imm 0 $lr0; lpassa $ls0 $ln0v",
+                "lpassa $ln8 $lr2",
+            ),
+        )
+
+    def test_new_memory_pe_virtual_offset_rejects_out_of_range_access(self) -> None:
+        builder = InstructionBuilder()
+        base = builder.new_memory_pe_virtual(8, 4)
+        out_of_range = base + 8
+
+        with builder.cycle():
+            builder.passa(
+                precision="l",
+                src_operand=out_of_range,
+                dst_operands=[GRF0.auto(0)],
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "exceeds virtual size 8"):
+            builder.lines()
+
+    def test_pe_virtual_flat_requires_same_kind_assignment(self) -> None:
+        builder = InstructionBuilder()
+        flat_operands = [builder.new_memory_pe_virtual(600, 2) for _ in range(4)]
+        flat_operand = builder.pe_virtual_flat(flat_operands)
+
+        self.assertIsInstance(flat_operand, PeVirtualFlatMemory)
+
+        with builder.cycle():
+            builder.imm(payload=0, dst_operands=[GRF0.auto(0)])
+            builder.passa(
+                precision="l",
+                src_operand=flat_operand,
+                dst_operands=[GRF1.flat([0, 2, 4, 6])],
+            )
+
+        assignments = builder.resolve_pe_virtual_operands()
+        for operand in flat_operands:
+            self.assertIsInstance(assignments[operand], LM1)
+            self.assertEqual(assignments[operand].render(), "$ln0")
+
+        self.assertEqual(
+            builder.lines(),
+            ("imm 0 $lr0; lpassa $ln[0,0,0,0] $ls[0,2,4,6]",),
+        )
+
+    def test_pe_virtual_flat_fails_when_same_kind_constraint_conflicts(self) -> None:
+        builder = InstructionBuilder()
+        only_lm0 = builder.new_memory_pe_virtual(600, 2)
+        only_lm1 = builder.new_memory_pe_virtual(600, 2)
+        other_lm1_a = builder.new_memory_pe_virtual(600, 2)
+        other_lm1_b = builder.new_memory_pe_virtual(600, 2)
+
+        with builder.cycle():
+            builder.passa(
+                precision="l",
+                src_operand=only_lm0,
+                dst_operands=[GRF0.auto(0)],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=LM1.auto(0, vector=True),
+                dst_operands=[GRF0.auto(2)],
+            )
+
+        with builder.cycle():
+            builder.imm(payload=0, dst_operands=[GRF0.auto(4)])
+            builder.passa(
+                precision="l",
+                src_operand=only_lm1,
+                dst_operands=[GRF0.auto(6)],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=other_lm1_a,
+                dst_operands=[GRF0.auto(8)],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=other_lm1_b,
+                dst_operands=[GRF0.auto(10)],
+            )
+
+        with builder.cycle():
+            builder.passa(
+                precision="l",
+                src_operand=builder.pe_virtual_flat(
+                    [only_lm0, only_lm1, other_lm1_a, other_lm1_b]
+                ),
+                dst_operands=[GRF1.flat([0, 2, 4, 6])],
+            )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "same-kind",
+        ):
+            builder.lines()
 
 
 class AutoAlufForwardingTests(unittest.TestCase):

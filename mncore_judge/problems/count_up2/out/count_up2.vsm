@@ -1,23 +1,26 @@
-ipassa $peid $ls0
-l1bmd $aluf $lb128; uldec $msb1 $lr2
-ipassa $l1bid $lm4v
-ipassa $l2bid $lm8v
-ipassa $mabid $lm12v; l1bmp $llb128 $lls0v
-fvpassa -$aluf $omr1; ipackbit $subpeid $lr2 $nowrite; l1bmp $llb136 $lls16v
+ipassa $peid $lr0
+ipassa $l1bid $lr2; l1bmd $aluf $lb0
+ipassa $l2bid $lr4
+iinc $lr0v $lr6
+linc $aluf $lr8v; l1bmp $lb0 $llr16v
+iand $lr6v $lr20 $omr4; l1bmp $lb8 $llr32v
+ilsl $lm[2,4,8,10] $ls[32,22,44,42] $lr48
+iadd $lr48 $lr50 $lr52v
+iadd $lr48 $lr50 $lr52v
+iadd $lr52v $aluf $lr52v
+ilsl $ls[16,20,24,28] $lr40 $lr52v/$imr4
+iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
+iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
+iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
+iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
+iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
+iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
+iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
+iadd $lr52v $aluf $lr52v; l1bmd $lr52v $lb2; l2bmr2iiadd $lb2 $lc0
 nop
-iinc $aluf $ln0v
-nop/1  # pseudo: assembler repetition shorthand
-iadd $aluf $ls8 $ln2
-ilsl $lm4 $ls2 $lr16v
-ilsl $lm8 $ls14 $lr20v
-ilsl $lm12 $ls24 $lr24v
-iadd $ln0v $lr16v $ln0v
-iadd $aluf $lr20v $ln0v
-iadd $aluf $lr24v $ln0v
-l1bmd $aluf $lb0
-d get $lb0 64  # debug: emulator-only memory dump
-nop/2  # pseudo: assembler repetition shorthand
-l2bmd $lb0 $lc0
-l2bmd $lb32 $lc256
+mvd/n2048 $lc0 $p0
+mvp/n16384 $lc0 $d0
 d get $lc0 64  # debug: emulator-only memory dump
-d get $lc256 64  # debug: emulator-only memory dump
+d get $lc512 64  # debug: emulator-only memory dump
+d get $lc1024 64  # debug: emulator-only memory dump
+d get $lc1536 64  # debug: emulator-only memory dump

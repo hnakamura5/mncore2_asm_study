@@ -14,9 +14,11 @@ from asm_wrapper import (
     L1BM,
     L2BM,
     DRAM,
+    PDM,
     ALUF,
     GRF0,
     GRF1,
+    with_write_mask_register,
     with_write_mask_pattern,
     DebugGRF0Ref,
     WordWidth,
@@ -69,6 +71,14 @@ def build() -> InstructionBuilder:
     imm_8 = seq_in_pe + 8 * 2
     imm_12 = seq_in_pe + 14 * 2
     imm_14 = seq_in_pe + 13 * 2
+    l1bid_shift8 = ib.new_memory(GRF0, 2)
+    l2bid_shift5 = ib.new_memory(GRF0, 2)
+    pe_result_8s = ib.new_memory(GRF0, 8)
+    mask_l1bid_lsb1 = ib.new_memory(MaskRegister, 1)
+    l1bm_result = ib.new_memory(L1BM, 512)
+    l2bm_result = ib.new_memory(L2BM, 512)
+    pdm_result = ib.new_memory(PDM, 16384)
+    dram_result = ib.new_memory(DRAM, 32678)
 
     # `$mabid`: 0 ~ 15
     # `$l2bid`: `group * 2 + l2b` 0 ~ 7
@@ -132,9 +142,9 @@ def build() -> InstructionBuilder:
         ib.and_(
             precision="i",
             src_x_operand=peid_1.as_vector(),
-            src_y_operand=1,
+            src_y_operand=imm_1,
             dst_operands=[mask_l1bid_lsb1],
-        )
+        )  # l1bmdの下位1bitに対応するマスク
         ib.l1bmp(src_l1bm=l1bm_peid_raw + 8, dst_operands=[seq_in_pe_ll_2.as_vector()])
         # 結合したのを戻して、PEごとに0 ~ 8 の単語繰り返し長語が入る
         # 順番は 8, C, 9, D, A, E, B, F
@@ -142,13 +152,13 @@ def build() -> InstructionBuilder:
     with ib.cycle():
         ib.lsl(
             precision="i",
-            src_x_operand=LM0.flat([l1bid, l2bid, 8, 10]),
+            src_x_operand=LM0.flat([l1bid.addr, l2bid.addr, 8, 10]),
             src_y_operand=GRF1.flat(
                 [
-                    seq_in_pe_addr + 8 * 2,  # 8
-                    seq_in_pe_addr + 3 * 2,  # 5
-                    seq_in_pe_addr + 14 * 2,  # 12
-                    seq_in_pe_addr + 13 * 2,  # 14
+                    seq_in_pe.addr + 8 * 2,  # 8
+                    seq_in_pe.addr + 3 * 2,  # 5
+                    seq_in_pe.addr + 14 * 2,  # 12
+                    seq_in_pe.addr + 13 * 2,  # 14
                 ]
             ),  # 8, 5, 12, 14
             dst_operands=[l1bid_shift8],  # この後にl2bid_shift5もある。ここで二か所？
@@ -183,17 +193,18 @@ def build() -> InstructionBuilder:
             precision="i",
             src_x_operand=GRF1.flat(
                 [
-                    seq_in_pe + 0 * 2,  # 0
-                    seq_in_pe + 2 * 2,  # 1
-                    seq_in_pe + 4 * 2,  # 2
-                    seq_in_pe + 6 * 2,  # 3
+                    seq_in_pe.addr + 0 * 2,  # 0
+                    seq_in_pe.addr + 2 * 2,  # 1
+                    seq_in_pe.addr + 4 * 2,  # 2
+                    seq_in_pe.addr + 6 * 2,  # 3
                 ]
             ),
             src_y_operand=seq_in_pe + 12 * 2,  # 10
             dst_operands=[
-                with_write_mask_pattern(pe_result_8s.as_vector(), mask_l1bid_lsb1)
+                with_write_mask_register(pe_result_8s.as_vector(), mask_l1bid_lsb1)
             ],
         )
+        ib.l1bmd(src_operand=pe_result_8s.as_vector(), dst_l1bm=l1bm_result)
 
     for i in range(8):
         with ib.cycle():
@@ -208,19 +219,13 @@ def build() -> InstructionBuilder:
 
     ib.nop()
 
-    with ib.cycle():
-        ib.mvd(
-            precision="i",
-            src_operand=pe_result_8s.as_vector(),
-            dst_l2bm=l2bm_result,
-        )
+    ib.mvd(size=2048, src_operand=l2bm_result, dst_operand=pdm_result)
 
-    with ib.cycle():
-        ib.mvp(
-            precision="i",
-            src_l2bm=l2bm_result,
-            dst_dram=DRAM.auto(0),
-        )
+    ib.mvp(
+        size=16384,
+        src_operand=l2bm_result,
+        dst_operand=dram_result,
+    )
 
     if True:
         ib.debug_get(target_memory=l2bm_result, num_words=64)

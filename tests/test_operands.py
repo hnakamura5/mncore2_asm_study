@@ -246,6 +246,8 @@ class OperandAddressArithmeticTests(unittest.TestCase):
         operand = LM0.flat([0, 2, 4, 6]) + 8
 
         self.assertEqual(operand.render(), "$lm[8,10,12,14]")
+        self.assertEqual(operand.addr, 8)
+        self.assertEqual(operand.flat_addrs, [8, 10, 12, 14])
 
     def test_dram_indirect_addition_offsets_dar_index(self) -> None:
         operand = DRAM(dar_addr=3, group=0) + 2
@@ -279,6 +281,26 @@ class OperandWidthConversionTests(unittest.TestCase):
         operand = Matrix(MatrixBank.Y, 4).as_width(WordWidth.DOUBLE_LONG)
 
         self.assertEqual(operand.render(), "$lly4")
+
+
+class OperandAddressMetadataTests(unittest.TestCase):
+    def test_auto_mode_records_addr(self) -> None:
+        operand = GRF0.auto(12, vector=True)
+
+        self.assertEqual(operand.addr, 12)
+        self.assertIsNone(operand.flat_addrs)
+
+    def test_flat_mode_records_head_addr_and_flat_addrs(self) -> None:
+        operand = LM1.flat([16, 18, 20, 22])
+
+        self.assertEqual(operand.addr, 16)
+        self.assertEqual(operand.flat_addrs, [16, 18, 20, 22])
+
+    def test_t_indirect_flat_records_head_addr_and_flat_addrs(self) -> None:
+        operand = LM0.t_indirect_flat([4, 8, 12, 16])
+
+        self.assertEqual(operand.addr, 4)
+        self.assertEqual(operand.flat_addrs, [4, 8, 12, 16])
 
 
 class OperandVectorConversionTests(unittest.TestCase):

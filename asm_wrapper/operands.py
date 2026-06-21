@@ -8,7 +8,7 @@ LM0/LM1・GRF0/GRF1・行列レジスタなどの空間を別 class に分けて
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 from enum import Enum
 import re
 from typing import Final, Literal, Protocol, Self, Sequence, TypeAlias
@@ -296,20 +296,14 @@ class DRAM(Operand):
     間接側は 16 長語単位で次の DAR エントリへ進む前提を持つ。
     """
 
-    addr: int | None = None
+    addr: int
     dar_addr: int | None = None
     group: int | None = None
 
     def _offset_by(self, delta: int) -> Self:
-        if self.addr is not None:
-            return replace(self, addr=self.addr + delta)
-        if self.dar_addr is not None:
-            return replace(self, dar_addr=self.dar_addr + delta)
-        raise ValueError("DRAM address arithmetic requires addr or dar_addr")
+        return replace(self, addr=self.addr + delta)
 
     def render(self) -> str:
-        if (self.addr is None) == (self.dar_addr is None):
-            raise ValueError("DRAM requires exactly one of addr or dar_addr")
         prefix = f"di{self.dar_addr}" if self.dar_addr is not None else f"d{self.addr}"
         suffix = f"@{self.group}" if self.group is not None else ""
         return f"${prefix}{suffix}"
@@ -396,6 +390,8 @@ class LM0(Operand):
     """
 
     suffix: str
+    addr: int
+    flat_addrs: list[int] = field(default_factory=list)
     width: WordWidth = WordWidth.LONG
 
     def as_width(self, width: WordWidth) -> Self:
@@ -405,7 +401,13 @@ class LM0(Operand):
         return replace(self, suffix=_replace_suffix_vector(self.suffix, vector))
 
     def _offset_by(self, delta: int) -> Self:
-        return replace(self, suffix=_offset_suffix_addresses(self.suffix, delta))
+        flat_addrs = [addr + delta for addr in self.flat_addrs]
+        return replace(
+            self,
+            suffix=_offset_suffix_addresses(self.suffix, delta),
+            addr=self.addr + delta,
+            flat_addrs=flat_addrs,
+        )
 
     @classmethod
     def auto(
@@ -432,7 +434,7 @@ class LM0(Operand):
         if madpe is not None:
             suffix += f"j{madpe}"
         suffix = _append_cycle_mask(suffix, cycle_mask)
-        return cls(suffix=suffix, width=width)
+        return cls(suffix=suffix, addr=addr, width=width)
 
     @classmethod
     def flat(
@@ -452,7 +454,12 @@ class LM0(Operand):
         if madpe is not None:
             suffix += f"j{madpe}"
         suffix = _append_cycle_mask(suffix, cycle_mask)
-        return cls(suffix=suffix, width=width)
+        return cls(
+            suffix=suffix,
+            addr=addresses[0],
+            flat_addrs=list(addresses),
+            width=width,
+        )
 
     @classmethod
     def t_indirect(
@@ -473,7 +480,7 @@ class LM0(Operand):
             if adri is not None:
                 suffix += str(adri)
         suffix = _append_cycle_mask(suffix, cycle_mask)
-        return cls(suffix=suffix, width=width)
+        return cls(suffix=suffix, addr=addr, width=width)
 
     @classmethod
     def t_indirect_flat(
@@ -487,7 +494,12 @@ class LM0(Operand):
 
         suffix = f"t{_format_flat_addrs(addresses)}"
         suffix = _append_cycle_mask(suffix, cycle_mask)
-        return cls(suffix=suffix, width=width)
+        return cls(
+            suffix=suffix,
+            addr=addresses[0],
+            flat_addrs=list(addresses),
+            width=width,
+        )
 
     @classmethod
     def raw(
@@ -499,7 +511,11 @@ class LM0(Operand):
     ) -> LM0:
         """仕様未確定の派生記法をそのまま保持したいときに使う。"""
 
-        return cls(suffix=_append_cycle_mask(suffix, cycle_mask), width=width)
+        return cls(
+            suffix=_append_cycle_mask(suffix, cycle_mask),
+            addr=0,
+            width=width,
+        )
 
     def render(self) -> str:
         return f"${self.width.value}m{self.suffix}"
@@ -513,6 +529,8 @@ class LM1(Operand):
     """
 
     suffix: str
+    addr: int
+    flat_addrs: list[int] = field(default_factory=list)
     width: WordWidth = WordWidth.LONG
 
     def as_width(self, width: WordWidth) -> Self:
@@ -522,7 +540,13 @@ class LM1(Operand):
         return replace(self, suffix=_replace_suffix_vector(self.suffix, vector))
 
     def _offset_by(self, delta: int) -> Self:
-        return replace(self, suffix=_offset_suffix_addresses(self.suffix, delta))
+        flat_addrs = [addr + delta for addr in self.flat_addrs]
+        return replace(
+            self,
+            suffix=_offset_suffix_addresses(self.suffix, delta),
+            addr=self.addr + delta,
+            flat_addrs=flat_addrs,
+        )
 
     @classmethod
     def auto(
@@ -546,7 +570,7 @@ class LM1(Operand):
         if madpe is not None:
             suffix += f"j{madpe}"
         suffix = _append_cycle_mask(suffix, cycle_mask)
-        return cls(suffix=suffix, width=width)
+        return cls(suffix=suffix, addr=addr, width=width)
 
     @classmethod
     def flat(
@@ -566,7 +590,12 @@ class LM1(Operand):
         if madpe is not None:
             suffix += f"j{madpe}"
         suffix = _append_cycle_mask(suffix, cycle_mask)
-        return cls(suffix=suffix, width=width)
+        return cls(
+            suffix=suffix,
+            addr=addresses[0],
+            flat_addrs=list(addresses),
+            width=width,
+        )
 
     @classmethod
     def raw(
@@ -576,7 +605,7 @@ class LM1(Operand):
         width: WordWidth = WordWidth.LONG,
         cycle_mask: str | None = None,
     ) -> LM1:
-        return cls(suffix=_append_cycle_mask(suffix, cycle_mask), width=width)
+        return cls(suffix=_append_cycle_mask(suffix, cycle_mask), addr=0, width=width)
 
     def render(self) -> str:
         return f"${self.width.value}n{self.suffix}"
@@ -592,6 +621,8 @@ class GRF0(Operand):
     """
 
     suffix: str
+    addr: int
+    flat_addrs: list[int] = field(default_factory=list)
     width: WordWidth = WordWidth.LONG
 
     def as_width(self, width: WordWidth) -> Self:
@@ -601,7 +632,13 @@ class GRF0(Operand):
         return replace(self, suffix=_replace_suffix_vector(self.suffix, vector))
 
     def _offset_by(self, delta: int) -> Self:
-        return replace(self, suffix=_offset_suffix_addresses(self.suffix, delta))
+        flat_addrs = [addr + delta for addr in self.flat_addrs]
+        return replace(
+            self,
+            suffix=_offset_suffix_addresses(self.suffix, delta),
+            addr=self.addr + delta,
+            flat_addrs=flat_addrs,
+        )
 
     @classmethod
     def auto(
@@ -622,7 +659,7 @@ class GRF0(Operand):
             if adri is not None:
                 suffix += str(adri)
         suffix = _append_cycle_mask(suffix, cycle_mask)
-        return cls(suffix=suffix, width=width)
+        return cls(suffix=suffix, addr=addr, width=width)
 
     @classmethod
     def flat(
@@ -636,6 +673,8 @@ class GRF0(Operand):
 
         return cls(
             suffix=_append_cycle_mask(_format_flat_addrs(addresses), cycle_mask),
+            addr=addresses[0],
+            flat_addrs=list(addresses),
             width=width,
         )
 
@@ -647,7 +686,12 @@ class GRF0(Operand):
         width: WordWidth = WordWidth.LONG,
         cycle_mask: str | None = None,
     ) -> GRF0:
-        return cls(suffix=_append_cycle_mask(suffix, cycle_mask), width=width)
+        return cls(
+            suffix=_append_cycle_mask(suffix, cycle_mask),
+            addr=0,
+            flat_addrs=[],
+            width=width,
+        )
 
     def render(self) -> str:
         return f"${self.width.value}r{self.suffix}"
@@ -661,6 +705,8 @@ class GRF1(Operand):
     """
 
     suffix: str
+    addr: int
+    flat_addrs: list[int] = field(default_factory=list)
     width: WordWidth = WordWidth.LONG
 
     def as_width(self, width: WordWidth) -> Self:
@@ -670,7 +716,13 @@ class GRF1(Operand):
         return replace(self, suffix=_replace_suffix_vector(self.suffix, vector))
 
     def _offset_by(self, delta: int) -> Self:
-        return replace(self, suffix=_offset_suffix_addresses(self.suffix, delta))
+        flat_addrs = [addr + delta for addr in self.flat_addrs]
+        return replace(
+            self,
+            suffix=_offset_suffix_addresses(self.suffix, delta),
+            addr=self.addr + delta,
+            flat_addrs=flat_addrs,
+        )
 
     @classmethod
     def auto(
@@ -691,7 +743,7 @@ class GRF1(Operand):
             if adri is not None:
                 suffix += str(adri)
         suffix = _append_cycle_mask(suffix, cycle_mask)
-        return cls(suffix=suffix, width=width)
+        return cls(suffix=suffix, addr=addr, flat_addrs=[], width=width)
 
     @classmethod
     def flat(
@@ -705,6 +757,8 @@ class GRF1(Operand):
 
         return cls(
             suffix=_append_cycle_mask(_format_flat_addrs(addresses), cycle_mask),
+            addr=addresses[0],
+            flat_addrs=list(addresses),
             width=width,
         )
 
@@ -716,7 +770,7 @@ class GRF1(Operand):
         width: WordWidth = WordWidth.LONG,
         cycle_mask: str | None = None,
     ) -> GRF1:
-        return cls(suffix=_append_cycle_mask(suffix, cycle_mask), width=width)
+        return cls(suffix=_append_cycle_mask(suffix, cycle_mask), addr=0, width=width)
 
     def render(self) -> str:
         return f"${self.width.value}s{self.suffix}"
@@ -952,7 +1006,7 @@ def with_write_mask_pattern(
 
 def with_write_mask_register(
     operand: MaskablePeWriteOperand,
-    register_addr: int,
+    register_addr: int | MaskRegister,
     *,
     double_long: bool = False,
     guard_suffix: WriteMaskGuardSuffix | None = None,
@@ -961,7 +1015,9 @@ def with_write_mask_register(
 
     return WriteMaskedOperand.register(
         operand,
-        register_addr,
+        register_addr.addr
+        if isinstance(register_addr, MaskRegister)
+        else register_addr,
         double_long=double_long,
         guard_suffix=guard_suffix,
     )

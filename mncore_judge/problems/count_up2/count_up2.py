@@ -93,7 +93,7 @@ def build() -> InstructionBuilder:
     # pdm_result = ib.new_memory(PDM, 16384)
     # dram_result = ib.new_memory(DRAM, 32678)
 
-    peid_raw = ib.new_memory_pe_virtual(2)
+    peid_raw = ib.new_memory_pe_virtual(8)
     l1bid = ib.new_memory_pe_virtual(8)
     l2bid = l1bid + 2
     l1bm_peid_raw = ib.new_memory(L1BM, 2)
@@ -101,20 +101,21 @@ def build() -> InstructionBuilder:
     peid_0_1 = ib.new_memory_pe_virtual(8)
     l1bid_0_1 = peid_0_1 + 2
     peid_1_2 = ib.new_memory_pe_virtual(8)
-    imm_1 = peid_1_2 + 1 * 2
+    imm_1_by_inc = peid_1_2 + 1 * 2
     seq_in_pe = ib.new_memory_pe_virtual(
         32, align=8
     )  # PEごとに0~8の単語繰り返し長語が入る
     seq_in_pe_ll = seq_in_pe.as_width(WordWidth.DOUBLE_LONG)
     seq_in_pe_ll_2 = seq_in_pe_ll + 8 * 2
-    seq_in_pe_copy = ib.new_memory(
-        GRF1, 32, align=8
+    # seq_in_pe_copy = ib.new_memory(GRF1, 32, align=8)
+    seq_in_pe_copy = ib.new_memory_pe_virtual(
+        32, align=8
     )  # PEごとに0~8の単語繰り返し長語が入る
     seq_in_pe_copy_ll = seq_in_pe_copy.as_width(WordWidth.DOUBLE_LONG)
     seq_in_pe_copy_ll_2 = seq_in_pe_copy_ll + 8 * 2
     mask_l1bid_lsb1 = ib.new_memory(MaskRegister, 1)
     imm_0 = seq_in_pe + 0 * 2
-    # imm_1 = seq_in_pe + 2 * 2
+    imm_1 = seq_in_pe + 2 * 2
     imm_2 = seq_in_pe + 4 * 2
     imm_3 = seq_in_pe + 6 * 2
     imm_5 = seq_in_pe + 3 * 2
@@ -174,16 +175,16 @@ def build() -> InstructionBuilder:
     with ib.cycle():
         ib.inc(
             precision="i",
-            src_operand=peid_raw.as_vector(),  # この後にl1bidもある
-            dst_operands=[peid_0_1],
+            src_operand=peid_raw.as_vector(),
+            dst_operands=[peid_0_1.as_vector()],  # この後にl1bidもある
         )
         # peid_0_1 に peid, peid + 1
         # l1bid_0_1 に l1bid, l1bid + 1 が入る
 
-    with ib.cycle():
+    with ib.cycle():  # C4
         ib.inc(
             precision="l",
-            src_operand=peid_0_1,
+            src_operand=peid_0_1.as_vector(),
             dst_operands=[peid_1_2.as_vector()],
         )  # peid_1_2 に peid, peid + 1, peid + 2, peid + 3 が入る
         ib.l1bmp(
@@ -197,17 +198,16 @@ def build() -> InstructionBuilder:
         ib.and_(
             precision="i",
             src_x_operand=l1bid_0_1,
-            src_y_operand=imm_1,
+            src_y_operand=imm_1_by_inc,
             dst_operands=[mask_l1bid_lsb1],
         )  # l1bmdの下位1bitに対応するマスク
-    with ib.cycle():
         ib.l1bmp(
             src_l1bm=l1bm_peid_raw_ll + 8, dst_operands=[seq_in_pe_ll_2.as_vector()]
         )
         # 結合したのを戻して、PEごとに0 ~ 8 の単語繰り返し長語が入る
         # 順番は 8, C, 9, D, A, E, B, F
 
-    with ib.cycle():
+    with ib.cycle():  # C6
         ib.lsl(
             precision="i",
             src_x_operand=l1bid.as_vector(),  # l1bid, l2bid, 1, 1
@@ -226,7 +226,7 @@ def build() -> InstructionBuilder:
         )
         # l1bid << 8 + l2bid << 5 の結果がpe_result_8sに入る
 
-    with ib.cycle():
+    with ib.cycle():  # C8
         ib.add(
             precision="i",
             src_x_operand=peid_0_1,
@@ -239,7 +239,7 @@ def build() -> InstructionBuilder:
         ib.lsl(
             precision="i",
             src_x_operand=ib.pe_virtual_flat([imm_0, imm_1, imm_2, imm_3]),
-            src_y_operand=seq_in_pe + 12 * 2,  # 10
+            src_y_operand=seq_in_pe_copy + 12 * 2,  # 10
             dst_operands=[
                 with_write_mask_register(pe_result_8s.as_vector(), mask_l1bid_lsb1)
             ],

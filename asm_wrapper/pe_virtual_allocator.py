@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import re
 from typing import Iterable
 
-from .operands import GRF0, GRF1, LM0, LM1, WordWidth
+from .operands import GRF0, GRF1, LM0, LM1, TReg, WordWidth
 from .statements import CycleStatement, Statement
 
 
@@ -31,6 +31,7 @@ _KIND_CAPACITY = {
     "lm1": 4096,
     "grf0": 512,
     "grf1": 512,
+    "treg": 4,
 }
 
 
@@ -290,7 +291,8 @@ def _build_root_states(
             roots[use.root_id] = root
         elif root.size != use.size or root.align != use.align:
             raise PeVirtualAllocationError(
-                f"PE virtual allocation failed: inconsistent virtual root metadata for root {use.root_id}"
+                "PE virtual allocation failed: inconsistent virtual root metadata for "
+                f"{_format_root_ref(use.root_id, roots, all_uses, cycles)}"
             )
         root.uses.append(use)
         if use.offset < 0:
@@ -301,6 +303,9 @@ def _build_root_states(
             root.reasons.append(
                 f"root {use.root_id}: access offset {use.offset} with width {use.width.value} exceeds virtual size {use.size}"
             )
+
+    for root in roots.values():
+        _filter_treg_candidate(root)
 
     for cycle in cycles:
         cycle_root_ids = list(cycle.virtual_uses)
@@ -383,7 +388,9 @@ def _build_root_states(
                 else "no candidate physical kind fits"
             )
             raise PeVirtualAllocationError(
-                f"PE virtual allocation failed: root {root.root_id} has no available physical PE memory kind ({details})"
+                "PE virtual allocation failed: "
+                f"{_format_root_ref(root.root_id, roots, all_uses, cycles)} "
+                f"has no available physical PE memory kind ({details})"
             )
 
     return roots
@@ -413,7 +420,9 @@ def _assign_roots(roots: dict[int, RootState]) -> dict[int, Assignment]:
                 else "no feasible address remained"
             )
             raise PeVirtualAllocationError(
-                f"PE virtual allocation failed: root {root.root_id} could not be assigned. candidates={candidate_text}. {details}"
+                "PE virtual allocation failed: "
+                f"{_format_root_ref(root.root_id, roots)} could not be assigned. "
+                f"candidates={candidate_text}. {details}"
             )
         assignments[root.root_id] = assigned
 
@@ -425,7 +434,9 @@ def _assign_single_root(
     roots: dict[int, RootState],
     assignments: dict[int, Assignment],
 ) -> Assignment | None:
-    for kind in sorted(root.candidates, key=lambda item: (_KIND_CAPACITY[item], item)):
+    for kind in sorted(
+        root.candidates, key=lambda item: (_kind_sort_capacity(item), item)
+    ):
         if any(
             peer_root_id in assignments and assignments[peer_root_id].kind != kind
             for peer_root_id in root.same_kind_peers
@@ -474,8 +485,31 @@ def _propagate_same_kind_candidates(roots: dict[int, RootState]) -> None:
             if not roots[component_root_id].candidates:
                 details = "; ".join(roots[component_root_id].reasons)
                 raise PeVirtualAllocationError(
-                    f"PE virtual allocation failed: root {component_root_id} has no available physical PE memory kind after same-kind propagation ({details or 'same-kind flat constraint'})"
+                    "PE virtual allocation failed: "
+                    f"{_format_root_ref(component_root_id, roots)} has no available physical "
+                    "PE memory kind after same-kind propagation "
+                    f"({details or 'same-kind flat constraint'})"
                 )
+
+
+def _format_root_ref(
+    root_id: int,
+    roots: dict[int, RootState],
+    all_uses: list[VirtualUse] | None = None,
+    cycles: list[CycleInfo] | None = None,
+) -> str:
+    if root_id not in roots:
+        return f"root {root_id}"
+
+    root = roots[root_id]
+    cycle_indexes = sorted(set(root.cycles))
+    offsets = sorted({use.offset for use in root.uses})
+    tokens = sorted({use.token for use in root.uses})
+    representative_token = tokens[0] if tokens else "<unknown>"
+    return (
+        f"root {root_id}"
+        f"[size={root.size}, align={root.align}, offsets={offsets}, cycles={cycle_indexes}, token={representative_token}]"
+    )
 
 
 def _base_available(
@@ -497,6 +531,22 @@ def _base_available(
 
 
 def _base_fits_constraints(root: RootState, kind: str, base: int | None) -> bool:
+    if kind == "treg":
+        if base is None:
+            base = 0
+        if base != 0:
+            return False
+        if root.same_kind_peers:
+            return False
+        widths = {use.width for use in root.uses}
+        if len(widths) != 1:
+            return False
+        if any(use.vector for use in root.uses):
+            return False
+        if any(use.offset != 0 for use in root.uses):
+            return False
+        max_size = 2 if next(iter(widths)) == WordWidth.LONG else 4
+        return root.size <= max_size
     if base is None:
         return True
     if base < 0:
@@ -616,6 +666,8 @@ def _collect_flat_virtual_tokens(
 def _physical_kind_from_token(token: str) -> str | None:
     match = _PHYSICAL_PE_RE.fullmatch(token)
     if match is None:
+        if token in {"$lt", "$llt"}:
+            return "treg"
         return None
     return {
         "m": "lm0",
@@ -630,6 +682,10 @@ def _parse_simple_physical_operand(
 ) -> tuple[str, int, WordWidth, bool] | None:
     match = _PHYSICAL_DIRECT_RE.fullmatch(token)
     if match is None:
+        if token == "$lt":
+            return "treg", 0, WordWidth.LONG, False
+        if token == "$llt":
+            return "treg", 0, WordWidth.DOUBLE_LONG, False
         return None
     kind = {
         "m": "lm0",
@@ -651,6 +707,8 @@ def _render_physical_use(use: VirtualUse, assignment: Assignment) -> str:
         return GRF0.auto(addr, width=use.width, vector=use.vector).render()
     if assignment.kind == "grf1":
         return GRF1.auto(addr, width=use.width, vector=use.vector).render()
+    if assignment.kind == "treg":
+        return TReg(width=use.width).render()
     raise AssertionError(f"Unknown PE physical kind: {assignment.kind}")
 
 
@@ -692,7 +750,57 @@ def _render_flat_virtual_token(
             width=flat_virtual_token.width,
             cycle_mask=flat_virtual_token.cycle_mask,
         ).render()
+    if kind == "treg":
+        raise PeVirtualAllocationError(
+            "PE virtual allocation failed: flat virtual operand cannot be assigned to TReg because TReg has no flat/addressed form"
+        )
     raise AssertionError(f"Unknown PE physical kind: {kind}")
+
+
+def _kind_sort_capacity(kind: str) -> int:
+    return _KIND_CAPACITY[kind]
+
+
+def _filter_treg_candidate(root: RootState) -> None:
+    if "treg" not in root.candidates:
+        return
+
+    widths = {use.width for use in root.uses}
+    if len(widths) != 1:
+        root.candidates.remove("treg")
+        root.reasons.append(
+            f"root {root.root_id}: TReg cannot be used because all accesses must have the same width"
+        )
+        return
+
+    width = next(iter(widths))
+    max_size = 2 if width == WordWidth.LONG else 4
+    if root.size > max_size:
+        root.candidates.remove("treg")
+        root.reasons.append(
+            f"root {root.root_id}: TReg cannot be used because this allocator only supports non-addressed TReg storage up to size {max_size} for width {width.value}"
+        )
+        return
+
+    if any(use.vector for use in root.uses):
+        root.candidates.remove("treg")
+        root.reasons.append(
+            f"root {root.root_id}: TReg cannot be used because TReg has no vector addressing form"
+        )
+        return
+
+    if any(use.offset != 0 for use in root.uses):
+        root.candidates.remove("treg")
+        root.reasons.append(
+            f"root {root.root_id}: TReg cannot be used because TReg has no explicit address and only offset 0 is supported"
+        )
+        return
+
+    if root.same_kind_peers:
+        root.candidates.remove("treg")
+        root.reasons.append(
+            f"root {root.root_id}: TReg cannot be used because flat virtual operands require an addressed same-kind form"
+        )
 
 
 def _render_statement(statement: Statement, replacements: dict[str, str]) -> str:

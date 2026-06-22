@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+from .statements import CycleStatement, Statement
 
 
 _ALU_EXACT_SPECS = {
@@ -75,6 +77,53 @@ class _InstructionSpec:
     alu: bool = False
 
 
+def apply_auto_aluf_forwarding_to_statements(
+    statements: tuple[Statement, ...] | list[Statement],
+) -> tuple[Statement, ...]:
+    prev_alu_outputs: set[str] = set()
+    forwarded_statements: list[Statement] = []
+
+    for statement in statements:
+        if isinstance(statement, CycleStatement):
+            item_texts = [item.text for item in statement.items]
+            parsed_items = [
+                _parse_instruction_item(item_text) for item_text in item_texts
+            ]
+            pe_cycle = any(parsed_item is not None for parsed_item in parsed_items)
+            if not pe_cycle:
+                forwarded_statements.append(statement)
+                continue
+
+            replaced_items = tuple(
+                replace(
+                    item,
+                    text=_replace_item_sources(
+                        item.text, parsed_item, prev_alu_outputs
+                    ),
+                )
+                for item, parsed_item in zip(statement.items, parsed_items, strict=True)
+            )
+            forwarded_statements.append(CycleStatement(items=replaced_items))
+            prev_alu_outputs = _next_alu_outputs(parsed_items)
+            continue
+
+        text = getattr(statement, "text", None)
+        if not isinstance(text, str):
+            forwarded_statements.append(statement)
+            continue
+
+        parsed_item = _parse_instruction_item(text)
+        if parsed_item is None:
+            forwarded_statements.append(statement)
+            continue
+
+        replaced_text = _replace_item_sources(text, parsed_item, prev_alu_outputs)
+        forwarded_statements.append(replace(statement, text=replaced_text))
+        prev_alu_outputs = _next_alu_outputs([parsed_item])
+
+    return tuple(forwarded_statements)
+
+
 def apply_auto_aluf_forwarding(lines: tuple[str, ...] | list[str]) -> tuple[str, ...]:
     prev_alu_outputs: set[str] = set()
     rendered_lines: list[str] = []
@@ -93,21 +142,7 @@ def apply_auto_aluf_forwarding(lines: tuple[str, ...] | list[str]) -> tuple[str,
             for item_text, parsed_item in zip(item_texts, parsed_items, strict=True)
         ]
         rendered_lines.append("; ".join(replaced_items))
-
-        has_no_forward = any(
-            parsed_item is not None and parsed_item.opcode in {"nop", "noforward"}
-            for parsed_item in parsed_items
-        )
-        if has_no_forward:
-            prev_alu_outputs = set()
-            continue
-
-        next_outputs: set[str] = set()
-        for parsed_item in parsed_items:
-            if parsed_item is None or not parsed_item.spec.alu:
-                continue
-            next_outputs.update(parsed_item.destination_tokens())
-        prev_alu_outputs = next_outputs
+        prev_alu_outputs = _next_alu_outputs(parsed_items)
 
     return tuple(rendered_lines)
 
@@ -125,6 +160,24 @@ class _ParsedInstruction:
             for destination in destinations
             if destination != "$nowrite"
         }
+
+
+def _next_alu_outputs(
+    parsed_items: list[_ParsedInstruction | None],
+) -> set[str]:
+    has_no_forward = any(
+        parsed_item is not None and parsed_item.opcode in {"nop", "noforward"}
+        for parsed_item in parsed_items
+    )
+    if has_no_forward:
+        return set()
+
+    next_outputs: set[str] = set()
+    for parsed_item in parsed_items:
+        if parsed_item is None or not parsed_item.spec.alu:
+            continue
+        next_outputs.update(parsed_item.destination_tokens())
+    return next_outputs
 
 
 def _replace_item_sources(

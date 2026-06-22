@@ -5,7 +5,10 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Generator, Sequence, Self, overload
 
-from .aluf_auto_forwarding import apply_auto_aluf_forwarding
+from .aluf_auto_forwarding import (
+    apply_auto_aluf_forwarding,
+    apply_auto_aluf_forwarding_to_statements,
+)
 from .debug import DebugDataType
 from .operands import (
     AluReadOperand,
@@ -38,6 +41,7 @@ from .operands import (
     PeWriteOperand,
     Renderable,
     RRNOpcode,
+    TReg,
     WordWidth,
 )
 from .pe_virtual_allocator import (
@@ -251,7 +255,7 @@ class InstructionBuilder:
 
     def resolve_pe_virtual_operands(
         self,
-    ) -> dict[PeVirtualMemory, LM0 | LM1 | GRF0 | GRF1]:
+    ) -> dict[PeVirtualMemory, LM0 | LM1 | GRF0 | GRF1 | TReg]:
         """
         仮想 PE メモリの現在の割り付け結果を、根オペランドごとに返す。
         """
@@ -260,13 +264,20 @@ class InstructionBuilder:
                 "Cannot resolve virtual operands while a cycle context is open"
             )
 
-        assignments = resolve_pe_virtual_assignments(self._lines)
+        assignments = resolve_pe_virtual_assignments(
+            self._statements_with_pre_auto_aluf_forwarding()
+        )
         return {
             self._pe_virtual_roots[root_id]: self._assignment_to_operand(assignment)
             for root_id, assignment in assignments.items()
         }
 
-    def _assignment_to_operand(self, assignment: Assignment) -> LM0 | LM1 | GRF0 | GRF1:
+    def _statements_with_pre_auto_aluf_forwarding(self) -> tuple[Statement, ...]:
+        return apply_auto_aluf_forwarding_to_statements(self._lines)
+
+    def _assignment_to_operand(
+        self, assignment: Assignment
+    ) -> LM0 | LM1 | GRF0 | GRF1 | TReg:
         if assignment.kind == "lm0":
             return LM0.auto(assignment.base)
         if assignment.kind == "lm1":
@@ -275,6 +286,8 @@ class InstructionBuilder:
             return GRF0.auto(assignment.base)
         if assignment.kind == "grf1":
             return GRF1.auto(assignment.base)
+        if assignment.kind == "treg":
+            return TReg()
         raise AssertionError(f"Unknown PE physical kind: {assignment.kind}")
 
     @contextmanager
@@ -339,7 +352,10 @@ class InstructionBuilder:
         """
         if self._active_cycle is not None:
             raise RuntimeError("Cannot read lines while a cycle context is open")
-        return apply_auto_aluf_forwarding(resolve_pe_virtual_statements(self._lines))
+        pre_forwarded_statements = self._statements_with_pre_auto_aluf_forwarding()
+        return apply_auto_aluf_forwarding(
+            resolve_pe_virtual_statements(pre_forwarded_statements)
+        )
 
     def to_source(self) -> str:
         """

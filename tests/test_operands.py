@@ -17,6 +17,7 @@ from asm_wrapper import (
     Nowrite,
     PeVirtualFlatMemory,
     PeVirtualMemory,
+    TReg,
     negate_mau_input,
     with_write_mask_pattern,
     with_write_mask_register,
@@ -168,9 +169,43 @@ class BuilderMemoryAllocationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             RuntimeError,
-            r"(?s)PE virtual allocation failed.*Cycle log:.*imm 0 \$lr0; fvadd.*Root log:.*root 1:.*tokens=",
+            r"(?s)PE virtual allocation failed: root 1\[.*token=__pevr1_s600_a2_o0_wl_v0__.*Cycle log:.*imm 0 \$lr0; fvadd.*Root log:.*root 1:.*tokens=",
         ):
             builder.lines()
+
+    def test_identical_virtual_operand_is_forwarded_before_allocation(self) -> None:
+        builder = InstructionBuilder()
+        forwarded = builder.new_memory_pe_virtual(600, 2)
+        other = builder.new_memory_pe_virtual(600, 2)
+
+        with builder.cycle():
+            builder.passa(
+                precision="l",
+                src_operand=GRF0.auto(0),
+                dst_operands=[forwarded],
+            )
+
+        with builder.cycle():
+            builder.imm(payload=0, dst_operands=[GRF0.auto(2)])
+            builder.fvadd(
+                src_x_operand=forwarded,
+                src_y_operand=other,
+                dst_operands=[GRF0.auto(4)],
+            )
+
+        assignments = builder.resolve_pe_virtual_operands()
+
+        self.assertIsInstance(assignments[forwarded], LM0)
+        self.assertEqual(assignments[forwarded].render(), "$lm0")
+        self.assertIsInstance(assignments[other], LM1)
+        self.assertEqual(assignments[other].render(), "$ln0")
+        self.assertEqual(
+            builder.lines(),
+            (
+                "lpassa $lr0 $lm0",
+                "imm 0 $lr2; fvadd $aluf $ln0 $lr4",
+            ),
+        )
 
     def test_new_memory_pe_virtual_resolves_across_multiple_busy_cycles(self) -> None:
         builder = InstructionBuilder()
@@ -352,6 +387,87 @@ class BuilderMemoryAllocationTests(unittest.TestCase):
         with self.assertRaisesRegex(
             RuntimeError,
             "same-kind",
+        ):
+            builder.lines()
+
+    def test_new_memory_pe_virtual_can_allocate_to_treg_when_eligible(self) -> None:
+        builder = InstructionBuilder()
+        treg_candidate = builder.new_memory_pe_virtual(2, 2)
+
+        with builder.cycle():
+            builder.imm(payload=0, dst_operands=[GRF0.auto(0)])
+            builder.passa(
+                precision="l",
+                src_operand=LM1.auto(0),
+                dst_operands=[GRF0.auto(2)],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=GRF1.auto(0),
+                dst_operands=[LM0.auto(0)],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=LM1.auto(2),
+                dst_operands=[Nowrite()],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=GRF1.auto(2),
+                dst_operands=[Nowrite()],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=treg_candidate,
+                dst_operands=[Nowrite()],
+            )
+
+        assignments = builder.resolve_pe_virtual_operands()
+
+        self.assertIsInstance(assignments[treg_candidate], TReg)
+        self.assertEqual(assignments[treg_candidate].render(), "$lt")
+        self.assertEqual(
+            builder.lines(),
+            (
+                "imm 0 $lr0; lpassa $ln0 $lr2; lpassa $ls0 $lm0; lpassa $ln2 $nowrite; lpassa $ls2 $nowrite; lpassa $lt $nowrite",
+            ),
+        )
+
+    def test_new_memory_pe_virtual_reports_when_treg_is_ineligible(self) -> None:
+        builder = InstructionBuilder()
+        treg_ineligible = builder.new_memory_pe_virtual(2, 2).as_vector(True)
+
+        with builder.cycle():
+            builder.imm(payload=0, dst_operands=[GRF0.auto(0)])
+            builder.passa(
+                precision="l",
+                src_operand=LM1.auto(0),
+                dst_operands=[GRF0.auto(2)],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=GRF1.auto(0),
+                dst_operands=[LM0.auto(0)],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=LM1.auto(2),
+                dst_operands=[Nowrite()],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=GRF1.auto(2),
+                dst_operands=[Nowrite()],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=treg_ineligible,
+                dst_operands=[Nowrite()],
+            )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"TReg cannot be used because TReg has no vector addressing form",
         ):
             builder.lines()
 

@@ -173,6 +173,30 @@ class BuilderMemoryAllocationTests(unittest.TestCase):
         ):
             builder.lines()
 
+    def test_new_memory_pe_virtual_reports_operand_names_for_multiple_shapes(
+        self,
+    ) -> None:
+        builder = InstructionBuilder()
+        base = builder.new_memory_pe_virtual(16, 2)
+
+        with builder.cycle():
+            builder.passa(
+                precision="l",
+                src_operand=base,
+                dst_operands=[GRF0.auto(0)],
+            )
+            builder.passa(
+                precision="l",
+                src_operand=GRF1.auto(0),
+                dst_operands=[base.as_vector()],
+            )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"(?s)multiple PE access shapes.*operands=\['__pevr0_s16_a2_o0_wl_v0__', '__pevr0_s16_a2_o0_wl_v1__'\]",
+        ):
+            builder.lines()
+
     def test_identical_virtual_operand_is_forwarded_before_allocation(self) -> None:
         builder = InstructionBuilder()
         forwarded = builder.new_memory_pe_virtual(600, 2)
@@ -263,6 +287,55 @@ class BuilderMemoryAllocationTests(unittest.TestCase):
             ),
         )
 
+    def test_frequently_used_virtual_operand_prefers_grf(self) -> None:
+        builder = InstructionBuilder()
+        hot = builder.new_memory_pe_virtual(8, 2)
+        cold = builder.new_memory_pe_virtual(8, 2)
+
+        with builder.cycle():
+            builder.passa(
+                precision="l",
+                src_operand=hot,
+                dst_operands=[cold],
+            )
+
+        with builder.cycle():
+            builder.passa(
+                precision="l",
+                src_operand=hot,
+                dst_operands=[Nowrite()],
+            )
+
+        with builder.cycle():
+            builder.passa(
+                precision="l",
+                src_operand=hot,
+                dst_operands=[Nowrite()],
+            )
+
+        with builder.cycle():
+            builder.passa(
+                precision="l",
+                src_operand=hot,
+                dst_operands=[Nowrite()],
+            )
+
+        assignments = builder.resolve_pe_virtual_operands()
+
+        self.assertIsInstance(assignments[hot], GRF0)
+        self.assertEqual(assignments[hot].render(), "$lr0")
+        self.assertIsInstance(assignments[cold], LM0)
+        self.assertEqual(assignments[cold].render(), "$lm0")
+        self.assertEqual(
+            builder.lines(),
+            (
+                "lpassa $lr0 $lm0",
+                "lpassa $lr0 $nowrite",
+                "lpassa $lr0 $nowrite",
+                "lpassa $lr0 $nowrite",
+            ),
+        )
+
     def test_new_memory_pe_virtual_offset_resolves_to_same_kind(self) -> None:
         builder = InstructionBuilder()
         base = builder.new_memory_pe_virtual(16, 4)
@@ -336,6 +409,33 @@ class BuilderMemoryAllocationTests(unittest.TestCase):
         self.assertEqual(
             builder.lines(),
             ("imm 0 $lr0; lpassa $ln[0,0,0,0] $ls[0,2,4,6]",),
+        )
+
+    def test_pe_virtual_flat_allows_same_root_with_multiple_offsets(self) -> None:
+        builder = InstructionBuilder()
+        seq_in_pe = builder.new_memory_pe_virtual(32, align=8)
+
+        with builder.cycle():
+            builder.imm(payload=0, dst_operands=[GRF0.auto(0)])
+            builder.passa(
+                precision="l",
+                src_operand=builder.pe_virtual_flat(
+                    [
+                        seq_in_pe + 16,
+                        seq_in_pe + 6,
+                        seq_in_pe + 28,
+                        seq_in_pe + 26,
+                    ]
+                ),
+                dst_operands=[GRF1.auto(0)],
+            )
+
+        assignments = builder.resolve_pe_virtual_operands()
+        self.assertIsInstance(assignments[seq_in_pe], LM1)
+        self.assertEqual(assignments[seq_in_pe].render(), "$ln0")
+        self.assertEqual(
+            builder.lines(),
+            ("imm 0 $lr0; lpassa $ln[16,6,28,26] $ls0",),
         )
 
     def test_pe_virtual_flat_fails_when_same_kind_constraint_conflicts(self) -> None:

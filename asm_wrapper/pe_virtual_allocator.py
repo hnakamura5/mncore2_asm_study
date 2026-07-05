@@ -34,6 +34,8 @@ _KIND_CAPACITY = {
     "treg": 4,
 }
 
+_GRF_PREFERRED_USE_COUNT = 4
+
 
 class PeVirtualAllocationError(RuntimeError):
     """仮想 PE メモリ割り付けに失敗したときの例外。"""
@@ -52,6 +54,10 @@ class VirtualUse:
     @property
     def signature(self) -> tuple[int, WordWidth, bool]:
         return (self.offset, self.width, self.vector)
+
+    @property
+    def shape_signature(self) -> tuple[WordWidth, bool]:
+        return (self.width, self.vector)
 
     @property
     def access_span(self) -> int:
@@ -320,10 +326,15 @@ def _build_root_states(
             root = roots[root_id]
             root.cycles.append(cycle.index)
             root.max_cycle_pressure = max(root.max_cycle_pressure, cycle.pressure)
-            signatures = {use.signature for use in cycle.virtual_uses[root_id]}
-            if len(signatures) > 1:
+            shape_signatures = {
+                use.shape_signature for use in cycle.virtual_uses[root_id]
+            }
+            if len(shape_signatures) > 1:
+                operand_names = sorted(
+                    {use.token for use in cycle.virtual_uses[root_id]}
+                )
                 root.reasons.append(
-                    f"cycle {cycle.index}: root {root_id} is used with multiple PE access shapes in the same cycle"
+                    f"cycle {cycle.index}: root {root_id} is used with multiple PE access shapes in the same cycle; operands={operand_names}"
                 )
                 root.candidates.clear()
                 continue
@@ -435,7 +446,8 @@ def _assign_single_root(
     assignments: dict[int, Assignment],
 ) -> Assignment | None:
     for kind in sorted(
-        root.candidates, key=lambda item: (_kind_sort_capacity(item), item)
+        root.candidates,
+        key=lambda item: _kind_assignment_priority(root, item),
     ):
         if any(
             peer_root_id in assignments and assignments[peer_root_id].kind != kind
@@ -759,6 +771,20 @@ def _render_flat_virtual_token(
 
 def _kind_sort_capacity(kind: str) -> int:
     return _KIND_CAPACITY[kind]
+
+
+def _kind_assignment_priority(root: RootState, kind: str) -> tuple[int, int, str]:
+    if kind == "treg":
+        kind_class_priority = 2
+    elif _prefer_grf_for_root(root):
+        kind_class_priority = 0 if kind.startswith("grf") else 1
+    else:
+        kind_class_priority = 0 if kind.startswith("lm") else 1
+    return (kind_class_priority, _kind_sort_capacity(kind), kind)
+
+
+def _prefer_grf_for_root(root: RootState) -> bool:
+    return len(root.uses) >= _GRF_PREFERRED_USE_COUNT
 
 
 def _filter_treg_candidate(root: RootState) -> None:

@@ -300,13 +300,13 @@ class PDM(Operand):
     """
 
     addr: int
-    group: int | None = None
+    group: int = 0
 
     def _offset_by(self, delta: int) -> Self:
         return replace(self, addr=self.addr + delta)
 
     def render(self) -> str:
-        suffix = f"@{self.group}" if self.group is not None else ""
+        suffix = f"@{self.group}"
         return f"$p{self.addr}{suffix}"
 
 

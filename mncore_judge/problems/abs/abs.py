@@ -18,7 +18,7 @@ from asm_wrapper import (
     DebugMaskRef,
 )
 
-# LM0上の Int 配列 X の各要素 X[i] について、絶対値 Y[i]=|X[i]| を計算し、LM1上に出力してください。
+# LM0上の Int 配列 X の各要素 X[i] について、絶対値 Y[i]=|X[i]| を計算し、LM1上に出力してください。(i = 0~87)
 
 # 次の VSM は、C 言語でいう if (m[i] >= 0) n[i] = m[i]; を実現しています。
 # imm i"0" $nowrite
@@ -27,6 +27,8 @@ from asm_wrapper import (
 
 sign_mask = MaskRegister(1)
 zero_register = GRF0.auto(0)
+input_lm0 = LM0.auto(0, vector=True, width=WordWidth.LONG)
+output_lm1 = LM1.auto(0, vector=True, width=WordWidth.LONG)
 
 
 def build() -> InstructionBuilder:

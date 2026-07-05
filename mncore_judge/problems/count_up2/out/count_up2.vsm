@@ -1,23 +1,26 @@
-ipassa $peid $lr0
-ipassa $l1bid $lr2; l1bmd $aluf $lb0
-ipassa $l2bid $lr4
-iinc $lr0v $lr6
-linc $aluf $lr14v; l1bmp $llb0 $llm0v $lls0v
-iand $lr8 $lr16 $omr4; l1bmp $llb8 $llm16v
-ilsl $lm[2,4,8,10] $ls[16,6,28,26] $lr22
-iadd $aluf $lr24 $lr26v
-iadd $lr6 $aluf $lr26v
-ilsl $ls[0,4,8,12] $lm24 $lr26v/$imr4; l1bmd $lr26 $lb2
-iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb66; l2bmr2iiadd $lb2 $lc0
-iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb130; l2bmr2iiadd $lb66 $lc256
-iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb194; l2bmr2iiadd $lb130 $lc512
-iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb258; l2bmr2iiadd $lb194 $lc768
-iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb322; l2bmr2iiadd $lb258 $lc1024
-iadd $aluf $aluf $lr26v/$imr4; l1bmd $aluf $lb386; l2bmr2iiadd $lb322 $lc1280
-l1bmd $aluf $lb450; l2bmr2iiadd $lb386 $lc1536
-l2bmr2iiadd $lb450 $lc1792
+ipassa $peid $ln0
+ipassa $l1bid $ln0; l1bmd $aluf $lb0
+ipassa $l2bid $ln2
+nop/2  # pseudo: assembler repetition shorthand
+iinc $ln0v $lm0v
+linc $aluf $ln0v; l1bmp $llb0 $llr0v $lls0v
+nop/2  # pseudo: assembler repetition shorthand
+iand $lm2 $ln2 $omr4; l1bmp $llb8 $llr16v $lls16v
+ilsl $ln0v $lr[16,6,28,26] $lm0
+iadd $aluf $aluf $ln0v
+iadd $lm2 $aluf $ln0v
+iadd $ls30 $aluf $ln0v
+ilsl $lr[0,4,8,12] $ls20 $ln0v/$imr4; l1bmd $aluf $lb64
+ilsl $lr[2,6,10,14] $ls20 $ln0v/$imr4; l1bmd $aluf $lb128; l2bmr2iiadd $lb64 $lc0
+ilsl $lr[16,22,20,28] $ls20 $ln0v/$imr4; l1bmd $aluf $lb192; l2bmr2iiadd $lb128 $lc256
+ilsl $lr[28,22,26,30] $ls20 $ln0v/$imr4; l1bmd $aluf $lb256; l2bmr2iiadd $lb192 $lc512
+ilsl $lr[0,4,8,12] $ls20 $ln0v/$imr4; l1bmd $aluf $lb320; l2bmr2iiadd $lb256 $lc768
+ilsl $lr[2,6,10,14] $ls20 $ln0v/$imr4; l1bmd $aluf $lb384; l2bmr2iiadd $lb320 $lc1024
+ilsl $lr[16,22,20,28] $ls20 $ln0v/$imr4; l1bmd $aluf $lb448; l2bmr2iiadd $lb384 $lc1280
+l1bmd $aluf $lb512; l2bmr2iiadd $lb448 $lc1536
+l2bmr2iiadd $lb512 $lc1792
 nop
-mvd/n2048 $lc0 $p0
+mvd/n2048 $lc0 $p0@0
 mvp/n16384 $lc0 $d0
 d get $lc0 64  # debug: emulator-only memory dump
 d get $lc512 64  # debug: emulator-only memory dump
